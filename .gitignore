@@ -10,5 +10,8 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+venv
+env
 
 dataset/
