@@ -12,9 +12,9 @@ st.set_page_config(page_title="WLASL Keyframe Extractor", layout="wide")
 
 st.title("🖐️ WLASL Keyframe & Feature Extractor")
 
-# --- SIDEBAR ---
-st.sidebar.header("Keyframe Extractor")
-keyframe_algo_choice = st.sidebar.selectbox(
+# --- MAIN CONTROLS ---
+st.subheader("Keyframe Extractor")
+keyframe_algo_choice = st.selectbox(
     "Keyframe Extraction Algorithm",
     (
         "Uniform Sampling (Standard)",
@@ -29,8 +29,8 @@ keyframe_algo_choice = st.sidebar.selectbox(
     )
 )
 
-st.sidebar.header("Landmark Extractor")
-landmark_choice = st.sidebar.selectbox(
+st.subheader("Landmark Extractor")
+landmark_choice = st.selectbox(
     "Landmark Extraction Method",
     (
         "None",
@@ -40,7 +40,7 @@ landmark_choice = st.sidebar.selectbox(
     )
 )
 
-num_frames_target = st.sidebar.slider("Target Number of Frames", 10, 50, 30)
+num_frames_target = st.slider("Target Number of Frames", 10, 50, 30)
 
 # --- HELPER FUNCTIONS ---
 
