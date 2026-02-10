@@ -1,4 +1,4 @@
-## Word Level English Sign Language Recognition Using Action Detection
+## Word Level American Sign Language Recognition Using Action Detection
 
 **IUT-SWE-22 | CSE-4544: ML Lab Final Project**
 
