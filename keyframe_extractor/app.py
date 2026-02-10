@@ -21,6 +21,7 @@ algo_choice = st.sidebar.selectbox(
         "Motion Detection (Action Segments)",
         "Optical Flow (Motion Magnitude)",
         "Keypoint/Skeleton (MediaPipe Pose+Hands)",
+        "CNN + LSTM (Feature Change)",
         "Relative Quantization (Paper Implementation)"
     )
 )
@@ -155,6 +156,62 @@ def keypoint_skeleton_extraction(frames, target_count):
     selected_frames = [frames[i] for i in top_indices]
     return selected_frames, top_indices
 
+def cnn_lstm_keyframe_extraction(frames, target_count):
+    if len(frames) < 2:
+        return frames, list(range(len(frames)))
+
+    def extract_cnn_features(frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
+
+        sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(sobelx, sobely)
+        lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
+
+        feats = []
+        for feat_map in (gray, mag, lap):
+            small = cv2.resize(feat_map, (8, 8), interpolation=cv2.INTER_AREA)
+            feats.append(small.flatten())
+        return np.concatenate(feats, axis=0).astype(np.float32)
+
+    features = np.stack([extract_cnn_features(f) for f in frames], axis=0)
+    features = (features - features.mean(axis=0)) / (features.std(axis=0) + 1e-6)
+
+    # Lightweight LSTM scoring (fixed weights) to measure temporal change
+    def sigmoid(x):
+        return 1.0 / (1.0 + np.exp(-x))
+
+    t_steps, feat_dim = features.shape
+    hidden_dim = min(128, feat_dim)
+    rng = np.random.default_rng(42)
+    W = rng.normal(0, 0.05, size=(4 * hidden_dim, feat_dim))
+    U = rng.normal(0, 0.05, size=(4 * hidden_dim, hidden_dim))
+    b = np.zeros(4 * hidden_dim, dtype=np.float32)
+
+    h = np.zeros(hidden_dim, dtype=np.float32)
+    c = np.zeros(hidden_dim, dtype=np.float32)
+    scores = [0.0]
+
+    for t in range(1, t_steps):
+        x = features[t]
+        z = W @ x + U @ h + b
+        f, i, o, g = np.split(z, 4)
+        f = sigmoid(f)
+        i = sigmoid(i)
+        o = sigmoid(o)
+        g = np.tanh(g)
+        c = f * c + i * g
+        h_new = o * np.tanh(c)
+        scores.append(float(np.linalg.norm(h_new - h)))
+        h = h_new
+
+    scores = np.array(scores)
+    top_indices = np.argsort(scores)[::-1][:target_count]
+    top_indices = np.sort(top_indices)
+    selected_frames = [frames[i] for i in top_indices]
+    return selected_frames, top_indices
+
 def draw_quantization_grid(frame):
     h, w, _ = frame.shape
     center_x, center_y = w // 2, h // 2
@@ -253,6 +310,12 @@ if uploaded_file is not None:
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Keypoint/Skeleton.")
+
+                elif algo_choice == "CNN + LSTM (Feature Change)":
+                    selected, idxs = cnn_lstm_keyframe_extraction(frames, num_frames_target)
+                    st.session_state['extracted_frames'] = selected
+                    st.session_state['extracted_indices'] = idxs
+                    st.success(f"Extracted {len(selected)} frames using CNN + LSTM.")
 
                 elif algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
