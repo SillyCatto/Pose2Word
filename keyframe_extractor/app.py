@@ -66,6 +66,8 @@ if "video_name" not in st.session_state:
     st.session_state["video_name"] = ""
 if "extracted_landmarks" not in st.session_state:
     st.session_state["extracted_landmarks"] = None
+if "raw_landmarks" not in st.session_state:
+    st.session_state["raw_landmarks"] = None
 
 # --- FILE UPLOAD ---
 uploaded_file = st.file_uploader("Upload a Sign Language Video", type=["mp4", "mov", "avi"])
@@ -88,6 +90,7 @@ if uploaded_file is not None:
             if st.button("Extract Frames"):
                 st.session_state["video_name"] = uploaded_file.name
                 st.session_state["extracted_landmarks"] = None  # Reset landmarks
+                st.session_state["raw_landmarks"] = None
 
                 if keyframe_algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
@@ -135,18 +138,32 @@ if uploaded_file is not None:
 
                     if st.button("🔍 Extract Landmarks"):
                         with st.spinner("Extracting landmarks with MediaPipe..."):
-                            landmarks = extract_landmarks_from_frames(
+                            # Always extract raw landmarks first (for visualization)
+                            raw = extract_landmarks_from_frames(
                                 st.session_state["extracted_frames"],
                                 method=landmark_choice,
-                                normalize=normalize_landmarks,
-                                localize=localize_landmarks,
+                                normalize=False,
+                                localize=False,
                             )
-                            # Pad/truncate to target frame count
-                            landmarks = landmarks_to_numpy(landmarks, num_frames_target)
-                            st.session_state["extracted_landmarks"] = landmarks
+                            raw = landmarks_to_numpy(raw, num_frames_target)
+                            st.session_state["raw_landmarks"] = raw
+
+                            # Apply optional transformations for data export
+                            if normalize_landmarks or localize_landmarks:
+                                transformed = extract_landmarks_from_frames(
+                                    st.session_state["extracted_frames"],
+                                    method=landmark_choice,
+                                    normalize=normalize_landmarks,
+                                    localize=localize_landmarks,
+                                )
+                                transformed = landmarks_to_numpy(transformed, num_frames_target)
+                            else:
+                                transformed = raw
+
+                            st.session_state["extracted_landmarks"] = transformed
                             st.success(
-                                f"Extracted landmarks: shape {landmarks.shape} "
-                                f"({landmarks.shape[0]} frames × {landmarks.shape[1]} features)"
+                                f"Extracted landmarks: shape {transformed.shape} "
+                                f"({transformed.shape[0]} frames × {transformed.shape[1]} features)"
                             )
 
                     # Show landmark data summary & save button
@@ -172,7 +189,7 @@ if uploaded_file is not None:
                         with st.expander("📊 Preview Landmark Data"):
                             st.dataframe(
                                 landmarks_data,
-                                use_container_width=True,
+                                width='stretch',
                                 height=300,
                             )
 
@@ -194,9 +211,11 @@ if uploaded_file is not None:
                             "🟢 Pose skeleton  ·  🟠 Left hand  ·  🔵 Right hand"
                         )
 
+                        # Use RAW landmarks (no normalization/localization) for visualization
+                        raw_lm = st.session_state["raw_landmarks"]
                         viz_frames = draw_landmarks_on_frames(
                             st.session_state["extracted_frames"],
-                            landmarks_data,
+                            raw_lm,
                             method=landmark_choice,
                         )
 
@@ -206,7 +225,7 @@ if uploaded_file is not None:
                                 st.image(
                                     vf,
                                     caption=f"Frame {st.session_state['extracted_indices'][i]}",
-                                    use_container_width=True,
+                                    width='stretch',
                                 )
 
                 # --- PREVIEW SECTION ---
@@ -218,7 +237,7 @@ if uploaded_file is not None:
                         st.image(
                             frame,
                             caption=f"Frame {st.session_state['extracted_indices'][i]}",
-                            use_container_width=True,
+                            width='stretch',
                         )
         else:
             st.error("Could not extract frames.")
