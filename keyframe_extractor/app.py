@@ -13,9 +13,9 @@ st.set_page_config(page_title="WLASL Keyframe Extractor", layout="wide")
 st.title("🖐️ WLASL Keyframe & Feature Extractor")
 
 # --- SIDEBAR ---
-st.sidebar.header("Settings")
-algo_choice = st.sidebar.selectbox(
-    "Choose Extraction Algorithm",
+st.sidebar.header("Keyframe Extractor")
+keyframe_algo_choice = st.sidebar.selectbox(
+    "Keyframe Extraction Algorithm",
     (
         "Uniform Sampling (Standard)",
         "Motion Detection (Action Segments)",
@@ -26,6 +26,17 @@ algo_choice = st.sidebar.selectbox(
         "Transformer Attention (Self-Attention)",
         "Voxel Spatio-Temporal (Motion Volume)",
         "Relative Quantization (Paper Implementation)"
+    )
+)
+
+st.sidebar.header("Landmark Extractor")
+landmark_choice = st.sidebar.selectbox(
+    "Landmark Extraction Method",
+    (
+        "None",
+        "MediaPipe Pose",
+        "MediaPipe Hands",
+        "MediaPipe Pose + Hands"
     )
 )
 
@@ -399,55 +410,55 @@ if uploaded_file is not None:
             if st.button("Extract Frames"):
                 st.session_state['video_name'] = uploaded_file.name
 
-                if algo_choice == "Uniform Sampling (Standard)":
+                if keyframe_algo_choice == "Uniform Sampling (Standard)":
                     selected, idxs = uniform_sampling(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Uniform Sampling.")
 
-                elif algo_choice == "Motion Detection (Action Segments)":
+                elif keyframe_algo_choice == "Motion Detection (Action Segments)":
                     selected, idxs = motion_based_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Motion Detection.")
 
-                elif algo_choice == "Optical Flow (Motion Magnitude)":
+                elif keyframe_algo_choice == "Optical Flow (Motion Magnitude)":
                     selected, idxs = optical_flow_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Optical Flow.")
 
-                elif algo_choice == "Farneback Dense Optical Flow":
+                elif keyframe_algo_choice == "Farneback Dense Optical Flow":
                     selected, idxs = farneback_dense_optical_flow_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Farneback Dense Optical Flow.")
 
-                elif algo_choice == "Keypoint/Skeleton (MediaPipe Pose+Hands)":
+                elif keyframe_algo_choice == "Keypoint/Skeleton (MediaPipe Pose+Hands)":
                     selected, idxs = keypoint_skeleton_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Keypoint/Skeleton.")
 
-                elif algo_choice == "CNN + LSTM (Feature Change)":
+                elif keyframe_algo_choice == "CNN + LSTM (Feature Change)":
                     selected, idxs = cnn_lstm_keyframe_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using CNN + LSTM.")
 
-                elif algo_choice == "Transformer Attention (Self-Attention)":
+                elif keyframe_algo_choice == "Transformer Attention (Self-Attention)":
                     selected, idxs = transformer_attention_keyframe_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Transformer Attention.")
 
-                elif algo_choice == "Voxel Spatio-Temporal (Motion Volume)":
+                elif keyframe_algo_choice == "Voxel Spatio-Temporal (Motion Volume)":
                     selected, idxs = voxel_spatiotemporal_extraction(frames, num_frames_target)
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Voxel Spatio-Temporal.")
 
-                elif algo_choice == "Relative Quantization (Paper Implementation)":
+                elif keyframe_algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
                     processed = [draw_quantization_grid(f) for f in selected]
                     st.session_state['extracted_frames'] = processed
@@ -460,7 +471,7 @@ if uploaded_file is not None:
 
                 # SAVE BUTTON
                 if st.button("💾 Save Frames to Folder"):
-                    if algo_choice == "Relative Quantization (Paper Implementation)":
+                    if keyframe_algo_choice == "Relative Quantization (Paper Implementation)":
                          st.warning("The Paper Implementation mode is for visualization only. Switch to Uniform or Motion to save raw data for training.")
                     else:
                         success, msg = save_frames_to_folder(
