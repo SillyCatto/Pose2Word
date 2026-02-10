@@ -5,6 +5,7 @@ import tempfile
 import os
 import tkinter as tk
 from tkinter import filedialog
+import mediapipe as mp
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="WLASL Keyframe Extractor", layout="wide")
@@ -19,6 +20,7 @@ algo_choice = st.sidebar.selectbox(
         "Uniform Sampling (Standard)",
         "Motion Detection (Action Segments)",
         "Optical Flow (Motion Magnitude)",
+        "Keypoint/Skeleton (MediaPipe Pose+Hands)",
         "Relative Quantization (Paper Implementation)"
     )
 )
@@ -96,6 +98,59 @@ def optical_flow_extraction(frames, target_count):
     flow_scores = np.array(flow_scores)
 
     top_indices = np.argsort(flow_scores)[::-1][:target_count]
+    top_indices = np.sort(top_indices)
+    selected_frames = [frames[i] for i in top_indices]
+    return selected_frames, top_indices
+
+def keypoint_skeleton_extraction(frames, target_count):
+    if len(frames) < 2:
+        return frames, list(range(len(frames)))
+
+    mp_pose = mp.solutions.pose
+    mp_hands = mp.solutions.hands
+
+    def extract_landmarks(frame, pose_model, hands_model):
+        results_pose = pose_model.process(frame)
+        results_hands = hands_model.process(frame)
+
+        points = []
+        if results_pose.pose_landmarks:
+            for lm in results_pose.pose_landmarks.landmark:
+                points.append((lm.x, lm.y))
+
+        if results_hands.multi_hand_landmarks:
+            for hand in results_hands.multi_hand_landmarks:
+                for lm in hand.landmark:
+                    points.append((lm.x, lm.y))
+
+        if not points:
+            return None
+        return np.array(points, dtype=np.float32)
+
+    keypoints = []
+    with mp_pose.Pose(static_image_mode=True, model_complexity=1) as pose_model, \
+         mp_hands.Hands(static_image_mode=True, max_num_hands=2) as hands_model:
+        for frame in frames:
+            keypoints.append(extract_landmarks(frame, pose_model, hands_model))
+
+    scores = []
+    for i in range(len(keypoints) - 1):
+        a = keypoints[i]
+        b = keypoints[i + 1]
+        if a is None or b is None:
+            scores.append(0)
+            continue
+        min_len = min(len(a), len(b))
+        if min_len == 0:
+            scores.append(0)
+            continue
+        diff = a[:min_len] - b[:min_len]
+        scores.append(float(np.mean(np.linalg.norm(diff, axis=1))))
+
+    scores.append(0)
+    scores = np.array(scores)
+
+    top_indices = np.argsort(scores)[::-1][:target_count]
     top_indices = np.sort(top_indices)
     selected_frames = [frames[i] for i in top_indices]
     return selected_frames, top_indices
@@ -192,6 +247,12 @@ if uploaded_file is not None:
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Optical Flow.")
+
+                elif algo_choice == "Keypoint/Skeleton (MediaPipe Pose+Hands)":
+                    selected, idxs = keypoint_skeleton_extraction(frames, num_frames_target)
+                    st.session_state['extracted_frames'] = selected
+                    st.session_state['extracted_indices'] = idxs
+                    st.success(f"Extracted {len(selected)} frames using Keypoint/Skeleton.")
 
                 elif algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
