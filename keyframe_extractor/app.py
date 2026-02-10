@@ -23,6 +23,7 @@ algo_choice = st.sidebar.selectbox(
         "Keypoint/Skeleton (MediaPipe Pose+Hands)",
         "CNN + LSTM (Feature Change)",
         "Transformer Attention (Self-Attention)",
+        "Voxel Spatio-Temporal (Motion Volume)",
         "Relative Quantization (Paper Implementation)"
     )
 )
@@ -261,6 +262,34 @@ def transformer_attention_keyframe_extraction(frames, target_count):
     selected_frames = [frames[i] for i in top_indices]
     return selected_frames, top_indices
 
+def voxel_spatiotemporal_extraction(frames, target_count, grid_size=32, threshold=12):
+    if len(frames) < 2:
+        return frames, list(range(len(frames)))
+
+    gray_frames = []
+    for f in frames:
+        gray = cv2.cvtColor(f, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, (grid_size, grid_size), interpolation=cv2.INTER_AREA)
+        gray_frames.append(gray)
+
+    motion_voxels = []
+    for i in range(len(gray_frames) - 1):
+        diff = cv2.absdiff(gray_frames[i], gray_frames[i + 1])
+        voxel = (diff > threshold).astype(np.uint8)
+        motion_voxels.append(voxel)
+
+    motion_voxels.append(np.zeros_like(motion_voxels[-1]))
+
+    scores = []
+    for i in range(len(motion_voxels)):
+        scores.append(float(np.mean(motion_voxels[i])))
+
+    scores = np.array(scores)
+    top_indices = np.argsort(scores)[::-1][:target_count]
+    top_indices = np.sort(top_indices)
+    selected_frames = [frames[i] for i in top_indices]
+    return selected_frames, top_indices
+
 def draw_quantization_grid(frame):
     h, w, _ = frame.shape
     center_x, center_y = w // 2, h // 2
@@ -371,6 +400,12 @@ if uploaded_file is not None:
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using Transformer Attention.")
+
+                elif algo_choice == "Voxel Spatio-Temporal (Motion Volume)":
+                    selected, idxs = voxel_spatiotemporal_extraction(frames, num_frames_target)
+                    st.session_state['extracted_frames'] = selected
+                    st.session_state['extracted_indices'] = idxs
+                    st.success(f"Extracted {len(selected)} frames using Voxel Spatio-Temporal.")
 
                 elif algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
