@@ -22,6 +22,7 @@ algo_choice = st.sidebar.selectbox(
         "Optical Flow (Motion Magnitude)",
         "Keypoint/Skeleton (MediaPipe Pose+Hands)",
         "CNN + LSTM (Feature Change)",
+        "Transformer Attention (Self-Attention)",
         "Relative Quantization (Paper Implementation)"
     )
 )
@@ -212,6 +213,54 @@ def cnn_lstm_keyframe_extraction(frames, target_count):
     selected_frames = [frames[i] for i in top_indices]
     return selected_frames, top_indices
 
+def transformer_attention_keyframe_extraction(frames, target_count):
+    if len(frames) < 2:
+        return frames, list(range(len(frames)))
+
+    def extract_features(frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
+
+        sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(sobelx, sobely)
+        lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
+
+        feats = []
+        for feat_map in (gray, mag, lap):
+            small = cv2.resize(feat_map, (8, 8), interpolation=cv2.INTER_AREA)
+            feats.append(small.flatten())
+        return np.concatenate(feats, axis=0).astype(np.float32)
+
+    features = np.stack([extract_features(f) for f in frames], axis=0)
+    features = (features - features.mean(axis=0)) / (features.std(axis=0) + 1e-6)
+
+    t_steps, feat_dim = features.shape
+    d_k = min(64, feat_dim)
+
+    rng = np.random.default_rng(123)
+    Wq = rng.normal(0, 0.05, size=(feat_dim, d_k))
+    Wk = rng.normal(0, 0.05, size=(feat_dim, d_k))
+    Wv = rng.normal(0, 0.05, size=(feat_dim, d_k))
+
+    Q = features @ Wq
+    K = features @ Wk
+    V = features @ Wv
+
+    # Self-attention scores
+    attn_logits = (Q @ K.T) / np.sqrt(d_k)
+    attn_logits = attn_logits - attn_logits.max(axis=1, keepdims=True)
+    attn_weights = np.exp(attn_logits)
+    attn_weights = attn_weights / (attn_weights.sum(axis=1, keepdims=True) + 1e-9)
+
+    # Importance per frame: average attention received
+    scores = attn_weights.mean(axis=0)
+
+    top_indices = np.argsort(scores)[::-1][:target_count]
+    top_indices = np.sort(top_indices)
+    selected_frames = [frames[i] for i in top_indices]
+    return selected_frames, top_indices
+
 def draw_quantization_grid(frame):
     h, w, _ = frame.shape
     center_x, center_y = w // 2, h // 2
@@ -316,6 +365,12 @@ if uploaded_file is not None:
                     st.session_state['extracted_frames'] = selected
                     st.session_state['extracted_indices'] = idxs
                     st.success(f"Extracted {len(selected)} frames using CNN + LSTM.")
+
+                elif algo_choice == "Transformer Attention (Self-Attention)":
+                    selected, idxs = transformer_attention_keyframe_extraction(frames, num_frames_target)
+                    st.session_state['extracted_frames'] = selected
+                    st.session_state['extracted_indices'] = idxs
+                    st.success(f"Extracted {len(selected)} frames using Transformer Attention.")
 
                 elif algo_choice == "Relative Quantization (Paper Implementation)":
                     selected, idxs = uniform_sampling(frames, 5)
