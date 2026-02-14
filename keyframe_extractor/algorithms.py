@@ -39,34 +39,7 @@ def motion_based_extraction(frames: list, target_count: int) -> tuple[list, list
     return selected_frames, top_indices
 
 
-def optical_flow_extraction(frames: list, target_count: int) -> tuple[list, list]:
-    """Selects frames based on optical flow magnitude."""
-    if len(frames) < 2:
-        return frames, list(range(len(frames)))
-
-    gray_frames = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
-    flow_scores = []
-
-    for i in range(len(gray_frames) - 1):
-        prev = gray_frames[i]
-        nxt = gray_frames[i + 1]
-        flow = cv2.calcOpticalFlowFarneback(
-            prev, nxt, None, 0.5, 3, 15, 3, 5, 1.2, 0
-        )
-        mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        flow_scores.append(float(np.mean(mag)))
-
-    # Pad the last frame score to match length
-    flow_scores.append(0)
-    flow_scores = np.array(flow_scores)
-
-    top_indices = np.argsort(flow_scores)[::-1][:target_count]
-    top_indices = np.sort(top_indices)
-    selected_frames = [frames[i] for i in top_indices]
-    return selected_frames, top_indices
-
-
-def farneback_dense_optical_flow_extraction(
+def optical_flow_farneback_dense_extraction(
     frames: list, target_count: int
 ) -> tuple[list, list]:
     """Selects frames using Farneback dense optical flow with Gaussian blur."""
@@ -85,6 +58,53 @@ def farneback_dense_optical_flow_extraction(
         mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
         flow_scores.append(float(np.mean(mag)))
 
+    flow_scores.append(0)
+    flow_scores = np.array(flow_scores)
+
+    top_indices = np.argsort(flow_scores)[::-1][:target_count]
+    top_indices = np.sort(top_indices)
+    selected_frames = [frames[i] for i in top_indices]
+    return selected_frames, top_indices
+
+
+def optical_flow_lucas_kanade_sparse_extraction(
+    frames: list, target_count: int
+) -> tuple[list, list]:
+    """Selects frames using Lucas-Kanade sparse optical flow."""
+    if len(frames) < 2:
+        return frames, list(range(len(frames)))
+
+    gray_frames = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
+    flow_scores = []
+
+    # Parameters for Shi-Tomasi corner detection
+    feature_params = dict(maxCorners=100, qualityLevel=0.3, minDistance=7, blockSize=7)
+
+    # Parameters for Lucas-Kanade optical flow
+    lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+    # Detect initial points to track
+    prev_points = cv2.goodFeaturesToTrack(gray_frames[0], mask=None, **feature_params)
+
+    for i in range(len(gray_frames) - 1):
+        prev = gray_frames[i]
+        nxt = gray_frames[i + 1]
+
+        # Calculate optical flow
+        next_points, status, _ = cv2.calcOpticalFlowPyrLK(prev, nxt, prev_points, None, **lk_params)
+
+        # Keep only good points
+        good_new = next_points[status == 1]
+        good_old = prev_points[status == 1]
+
+        # Calculate motion magnitude
+        motion = np.linalg.norm(good_new - good_old, axis=1)
+        flow_scores.append(float(np.mean(motion)))
+
+        # Update points for next iteration
+        prev_points = good_new.reshape(-1, 1, 2)
+
+    # Pad the last frame score to match length
     flow_scores.append(0)
     flow_scores = np.array(flow_scores)
 
@@ -320,43 +340,13 @@ def voxel_spatiotemporal_extraction(
     return selected_frames, top_indices
 
 
-def draw_quantization_grid(frame) -> np.ndarray:
-    """Draws a relative quantization grid overlay on a frame."""
-    h, w, _ = frame.shape
-    center_x, center_y = w // 2, h // 2
-    overlay = frame.copy()
-    step_x = w // 10
-    step_y = h // 10
-    color = (0, 255, 0)
-    for i in range(-5, 6):
-        cv2.line(
-            overlay,
-            (center_x + i * step_x, 0),
-            (center_x + i * step_x, h),
-            color,
-            1,
-        )
-        cv2.line(
-            overlay,
-            (0, center_y + i * step_y),
-            (w, center_y + i * step_y),
-            color,
-            1,
-        )
-    cv2.circle(overlay, (center_x, center_y), 5, (255, 0, 0), -1)
-    return cv2.addWeighted(overlay, 0.5, frame, 0.5, 0)
-
-
 # --- Algorithm registry for clean UI dispatch ---
 ALGORITHM_MAP = {
     "Uniform Sampling (Standard)": lambda frames, n: uniform_sampling(frames, n),
     "Motion Detection (Action Segments)": lambda frames, n: motion_based_extraction(
         frames, n
     ),
-    "Optical Flow (Motion Magnitude)": lambda frames, n: optical_flow_extraction(
-        frames, n
-    ),
-    "Farneback Dense Optical Flow": lambda frames, n: farneback_dense_optical_flow_extraction(
+    "Optical Flow (Motion Magnitude)": lambda frames, n: optical_flow_farneback_dense_extraction(
         frames, n
     ),
     "Keypoint/Skeleton (MediaPipe Pose+Hands)": lambda frames, n: keypoint_skeleton_extraction(
@@ -371,8 +361,31 @@ ALGORITHM_MAP = {
     "Voxel Spatio-Temporal (Motion Volume)": lambda frames, n: voxel_spatiotemporal_extraction(
         frames, n
     ),
+    "Lucas-Kanade Sparse Optical Flow": lambda frames, n: optical_flow_lucas_kanade_sparse_extraction(
+        frames, n
+    ),
 }
 
 ALGORITHM_NAMES = list(ALGORITHM_MAP.keys()) + [
     "Relative Quantization (Paper Implementation)"
 ]
+
+def draw_quantization_grid(frame, grid_size=10):
+    """Draws a 10×10 green grid on the frame and marks the center with a red dot."""
+    height, width, _ = frame.shape
+    grid_color = (0, 255, 0)  # Green
+    center_color = (0, 0, 255)  # Red
+
+    # Draw vertical grid lines
+    for x in range(0, width, width // grid_size):
+        cv2.line(frame, (x, 0), (x, height), grid_color, 1)
+
+    # Draw horizontal grid lines
+    for y in range(0, height, height // grid_size):
+        cv2.line(frame, (0, y), (width, y), grid_color, 1)
+
+    # Draw center point
+    center = (width // 2, height // 2)
+    cv2.circle(frame, center, 5, center_color, -1)
+
+    return frame
