@@ -19,10 +19,10 @@ import json
 sys.path.append(str(Path(__file__).parent.parent.parent / "model"))
 
 # Import model components
-from model.sign_classifier import create_model
-from model.trainer import train_model
-from model.dataset import SignLanguageDataset
-from model.raft_flow_extractor import RAFTFlowExtractor
+from sign_classifier import create_model
+from trainer import train_model
+from dataset import SignLanguageDataset
+from raft_flow_extractor import RAFTFlowExtractor
 
 
 def render():
@@ -58,13 +58,28 @@ def render_training_tab():
     
     # Configuration
     with st.expander("📁 Data Configuration", expanded=True):
+        st.info("""
+        **Expected Directory Structure:**
+        ```
+        landmarks_directory/
+        ├── class1/
+        │   ├── sample1.npy
+        │   ├── sample2.npy
+        │   └── ...
+        ├── class2/
+        │   ├── sample1.npy
+        │   └── ...
+        ```
+        Each class should have its own subdirectory with .npy files.
+        """)
+        
         col1, col2 = st.columns(2)
         
         with col1:
             landmarks_dir = st.text_input(
                 "Landmarks Directory",
                 value="extracted_landmarks",
-                help="Directory containing .npy landmark files organized by class"
+                help="Path to directory containing subdirectories for each class"
             )
         
         with col2:
