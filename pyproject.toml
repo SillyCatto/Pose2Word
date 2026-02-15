@@ -1,16 +1,4 @@
-# 1. Activate virtualenv
-source .venv/bin/activate
-
-# 2. Install PyTorch + dependencies
-pip install torch torchvision torchaudio
-pip install timm einops tqdm tensorboard scikit-learn
-
-# 3. Verify MPS
-python -c "import torch; print('MPS:', torch.backends.mps.is_available())"
-
-# 4. Update your project dependencies
-# Add the packages to pyproject.toml, then:
-pip install -e .[project]
+[project]
 name = "sem-5-ml-project"
 version = "0.1.0"
 description = "WLASL Sign Language Recognition with RAFT and PyTorch"
@@ -39,3 +27,7 @@ dependencies = [
     "matplotlib>=3.9.0",
     "seaborn>=0.13.0",
 ]
+
+[tool.setuptools]
+packages = ["keyframe_extractor", "keyframe_extractor.views"]
+
