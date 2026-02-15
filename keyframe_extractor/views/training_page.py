@@ -18,13 +18,11 @@ import json
 # Add model directory to path
 sys.path.append(str(Path(__file__).parent.parent.parent / "model"))
 
-try:
-    from model.sign_classifier import create_model
-    from model.trainer import train_model
-    from model.dataset import SignLanguageDataset
-    from model.raft_flow_extractor import RAFTFlowExtractor
-except ImportError:
-    pass
+# Import model components
+from model.sign_classifier import create_model
+from model.trainer import train_model
+from model.dataset import SignLanguageDataset
+from model.raft_flow_extractor import RAFTFlowExtractor
 
 
 def render():
