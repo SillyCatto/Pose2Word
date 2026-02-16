@@ -371,31 +371,295 @@ def render_inference_tab():
     st.subheader("🔮 Single Sample Inference")
     
     st.markdown("""
-    Test your trained model on individual samples.
+    Test your trained model on individual videos or landmark files.
     """)
     
-    col1, col2 = st.columns(2)
+    # Model configuration
+    with st.expander("🧠 Model Configuration", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            checkpoint_path = st.text_input(
+                "Model Checkpoint",
+                value="checkpoints/lstm_run1/best_model.pth",
+                help="Path to trained model checkpoint"
+            )
+        
+        with col2:
+            class_names_file = st.text_input(
+                "Class Names File (Optional)",
+                value="",
+                help="JSON file with class names. If empty, will use class indices."
+            )
     
-    with col1:
-        model_path = st.text_input(
-            "Model Path",
-            value="checkpoints/lstm_run1/best_model.pth"
+    # Input mode
+    st.markdown("---")
+    st.subheader("📁 Input")
+    
+    input_mode = st.radio(
+        "Input Type",
+        options=["Video File", "Landmark File (.npy)"],
+        horizontal=True
+    )
+    
+    input_data = None
+    is_video = False
+    
+    if input_mode == "Video File":
+        uploaded_video = st.file_uploader(
+            "Upload Video",
+            type=["mp4", "avi", "mov", "mkv"],
+            help="Upload a sign language video for inference"
         )
+        
+        if uploaded_video:
+            # Save to temp file
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_video.name).suffix) as tmp_file:
+                tmp_file.write(uploaded_video.read())
+                input_data = tmp_file.name
+            is_video = True
+            st.success(f"✓ Uploaded: {uploaded_video.name}")
     
-    with col2:
-        sample_path = st.file_uploader(
-            "Upload Sample (.npy)",
+    else:  # Landmark File
+        uploaded_landmarks = st.file_uploader(
+            "Upload Landmarks (.npy)",
             type=["npy"],
-            help="Upload a .npy file with landmark features"
+            help="Upload pre-extracted landmark features"
         )
+        
+        if uploaded_landmarks:
+            # Save to temp file
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".npy") as tmp_file:
+                tmp_file.write(uploaded_landmarks.read())
+                input_data = tmp_file.name
+            is_video = False
+            st.success(f"✓ Uploaded: {uploaded_landmarks.name}")
     
-    if sample_path and st.button("🎯 Predict", type="primary"):
-        st.info("Inference feature coming soon!")
-        st.write("This will:")
-        st.write("- Load the sample")
-        st.write("- Extract flow features")
-        st.write("- Run model prediction")
-        st.write("- Show top-k predictions with confidence scores")
+    # Processing options
+    with st.expander("⚙️ Processing Options"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            use_flow = st.checkbox(
+                "Extract Flow Features",
+                value=True,
+                help="Extract RAFT optical flow (only for video input)"
+            )
+            
+            if use_flow:
+                flow_model = st.selectbox(
+                    "RAFT Model",
+                    options=["small", "large"],
+                    help="RAFT model size"
+                )
+        
+        with col2:
+            top_k = st.number_input(
+                "Top-K Predictions",
+                min_value=1,
+                max_value=10,
+                value=3,
+                help="Show top K predictions"
+            )
+            
+            device = st.selectbox(
+                "Device",
+                options=["auto", "mps", "cuda", "cpu"]
+            )
+    
+    # Predict button
+    st.markdown("---")
+    
+    if st.button("🎯 Predict", type="primary", disabled=input_data is None):
+        if not input_data:
+            st.error("Please upload a file first!")
+            return
+        
+        if not Path(checkpoint_path).exists():
+            st.error(f"Model checkpoint not found: {checkpoint_path}")
+            return
+        
+        try:
+            import torch
+            import cv2
+            
+            # Auto-detect device
+            if device == "auto":
+                if torch.backends.mps.is_available():
+                    device_type = "mps"
+                elif torch.cuda.is_available():
+                    device_type = "cuda"
+                else:
+                    device_type = "cpu"
+            else:
+                device_type = device
+            
+            device_obj = torch.device(device_type)
+            st.info(f"Using device: **{device_type.upper()}**")
+            
+            # Load checkpoint to get model config
+            with st.spinner("Loading model..."):
+                checkpoint = torch.load(checkpoint_path, map_location=device_obj)
+                model_config = checkpoint.get("config", {})
+                
+                # Get model architecture
+                model_type = model_config.get("model_type", "lstm")
+                num_classes = model_config.get("num_classes", 15)
+                hidden_dim = model_config.get("hidden_dim", 256)
+                
+                st.write(f"**Model:** {model_type.upper()} | **Classes:** {num_classes}")
+            
+            # Process input
+            landmarks = None
+            flow_features = None
+            
+            if is_video:
+                # Extract landmarks from video
+                with st.spinner("Extracting landmarks from video..."):
+                    from landmark_extractor import extract_video_landmarks
+                    
+                    landmarks = extract_video_landmarks(input_data)
+                    
+                    if landmarks is None or len(landmarks) == 0:
+                        st.error("Failed to extract landmarks from video!")
+                        return
+                    
+                    st.success(f"✓ Extracted landmarks: {landmarks.shape}")
+                
+                # Extract flow if requested
+                if use_flow:
+                    with st.spinner("Extracting RAFT optical flow..."):
+                        from raft_flow_extractor import RAFTFlowExtractor
+                        
+                        # Read video frames
+                        cap = cv2.VideoCapture(input_data)
+                        frames = []
+                        while True:
+                            ret, frame = cap.read()
+                            if not ret:
+                                break
+                            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        cap.release()
+                        
+                        # Extract flow
+                        extractor = RAFTFlowExtractor(model_type=flow_model, device=device_type)
+                        flow_features = extractor.extract_global_flow_features(frames, feature_dim=32)
+                        
+                        st.success(f"✓ Extracted flow: {flow_features.shape}")
+            
+            else:
+                # Load landmarks from file
+                with st.spinner("Loading landmarks..."):
+                    landmarks = np.load(input_data)
+                    st.success(f"✓ Loaded landmarks: {landmarks.shape}")
+            
+            # Create model
+            with st.spinner("Initializing model..."):
+                from sign_classifier import LSTMSignClassifier, TransformerSignClassifier, HybridSignClassifier
+                
+                use_flow_features = flow_features is not None
+                
+                if model_type == "lstm":
+                    model = LSTMSignClassifier(
+                        num_classes=num_classes,
+                        hidden_dim=hidden_dim,
+                        use_flow=use_flow_features
+                    )
+                elif model_type == "transformer":
+                    model = TransformerSignClassifier(
+                        num_classes=num_classes,
+                        d_model=hidden_dim,
+                        use_flow=use_flow_features
+                    )
+                else:  # hybrid
+                    model = HybridSignClassifier(
+                        num_classes=num_classes,
+                        hidden_dim=hidden_dim,
+                        use_flow=use_flow_features
+                    )
+                
+                # Load weights
+                model.load_state_dict(checkpoint["model_state_dict"])
+                model = model.to(device_obj)
+                model.eval()
+            
+            # Run inference
+            with st.spinner("Running inference..."):
+                with torch.no_grad():
+                    # Prepare input
+                    landmarks_tensor = torch.from_numpy(landmarks).float().unsqueeze(0).to(device_obj)
+                    
+                    if use_flow_features and flow_features is not None:
+                        flow_tensor = torch.from_numpy(flow_features).float().unsqueeze(0).to(device_obj)
+                        logits = model(landmarks_tensor, flow_tensor)
+                    else:
+                        logits = model(landmarks_tensor)
+                    
+                    # Get probabilities
+                    probs = torch.softmax(logits, dim=-1)
+                    top_probs, top_indices = torch.topk(probs, k=min(top_k, num_classes), dim=-1)
+                    
+                    top_probs = top_probs[0].cpu().numpy()
+                    top_indices = top_indices[0].cpu().numpy()
+            
+            # Load class names if provided
+            class_names = None
+            if class_names_file and Path(class_names_file).exists():
+                import json
+                with open(class_names_file) as f:
+                    class_names = json.load(f)
+            
+            # Display results
+            st.markdown("---")
+            st.subheader("📊 Prediction Results")
+            
+            # Top prediction
+            top_class = class_names[top_indices[0]] if class_names else f"Class {top_indices[0]}"
+            top_confidence = top_probs[0] * 100
+            
+            st.markdown(f"""
+            ### 🏆 Top Prediction
+            **{top_class}** - {top_confidence:.2f}% confidence
+            """)
+            
+            # Show all top-k predictions
+            st.markdown(f"### Top {top_k} Predictions")
+            
+            for i, (idx, prob) in enumerate(zip(top_indices, top_probs), 1):
+                class_name = class_names[idx] if class_names else f"Class {idx}"
+                confidence = prob * 100
+                
+                # Progress bar for confidence
+                st.write(f"**{i}. {class_name}**")
+                st.progress(float(prob))
+                st.write(f"{confidence:.2f}%")
+            
+            # Feature info
+            st.markdown("---")
+            st.subheader("ℹ️ Input Information")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Landmarks:**")
+                st.write(f"- Shape: {landmarks.shape}")
+                st.write(f"- Frames: {landmarks.shape[0]}")
+                st.write(f"- Features: {landmarks.shape[1]}")
+            
+            with col2:
+                if flow_features is not None:
+                    st.write("**Flow Features:**")
+                    st.write(f"- Shape: {flow_features.shape}")
+                    st.write(f"- Frames: {flow_features.shape[0]}")
+                    st.write(f"- Features: {flow_features.shape[1]}")
+                else:
+                    st.write("**Flow Features:** Not used")
+        
+        except Exception as e:
+            st.error(f"❌ Prediction failed: {str(e)}")
+            st.exception(e)
 
 
 if __name__ == "__main__":
