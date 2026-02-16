@@ -170,10 +170,21 @@ def render():
             
             status_text.text("Extracting optical flow...")
             
-            # Extract flow features
+            # First extract flow from frames
+            flows = extractor.extract_flow_from_frames(frames, return_magnitude=True)
+            
+            # Then pool to global features
+            # feature_dim 32 -> (4,4), 64 -> (8,4), 128 -> (8,8)
+            if feature_dim == 32:
+                pool_size = (4, 4)
+            elif feature_dim == 64:
+                pool_size = (8, 4)
+            else:
+                pool_size = (8, 8)
+            
             flow_features = extractor.extract_global_flow_features(
-                frames=frames,
-                feature_dim=feature_dim
+                flows=flows,
+                pool_size=pool_size
             )
             
             progress_bar.progress(1.0)
@@ -312,10 +323,20 @@ def render():
                             st.warning(f"Skipping {video_file.name}: less than 2 frames")
                             continue
                         
-                        # Extract flow
+                        # First extract flow from frames
+                        flows = extractor.extract_flow_from_frames(frames, return_magnitude=True)
+                        
+                        # Then pool to global features
+                        if feature_dim == 32:
+                            pool_size = (4, 4)
+                        elif feature_dim == 64:
+                            pool_size = (8, 4)
+                        else:
+                            pool_size = (8, 8)
+                        
                         flow_features = extractor.extract_global_flow_features(
-                            frames=frames,
-                            feature_dim=feature_dim
+                            flows=flows,
+                            pool_size=pool_size
                         )
                         
                         # Save with same name
