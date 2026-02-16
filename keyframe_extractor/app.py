@@ -15,7 +15,7 @@ Business logic is delegated to separate modules:
 
 import streamlit as st
 
-from views import keyframe_page, landmark_page, training_page
+from views import keyframe_page, landmark_page, flow_page, training_page
 
 
 # =============================================================================
@@ -59,9 +59,10 @@ st.markdown(
 st.title("🖐️ WLASL Dataset Preparation Tool")
 
 # Create tabs
-tab_keyframe, tab_landmark, tab_training = st.tabs([
+tab_keyframe, tab_landmark, tab_flow, tab_training = st.tabs([
     "📹 Keyframe Extractor", 
     "🦴 Landmark Extractor",
+    "🌊 Flow Extractor",
     "🤖 Model Training"
 ])
 
@@ -71,6 +72,9 @@ with tab_keyframe:
 
 with tab_landmark:
     landmark_page.render()
+
+with tab_flow:
+    flow_page.render()
 
 with tab_training:
     training_page.render()
