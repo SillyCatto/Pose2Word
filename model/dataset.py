@@ -166,7 +166,12 @@ def create_data_loaders(
     
     # Split into train and validation
     dataset_size = len(full_dataset)
-    train_size = int(train_split * dataset_size)
+    
+    if dataset_size == 0:
+        raise ValueError("Dataset is empty! Check that your landmarks directory has class subdirectories with .npy files.")
+    
+    # Ensure at least 1 sample in train set if we have any data
+    train_size = max(1, int(train_split * dataset_size))
     val_size = dataset_size - train_size
     
     generator = torch.Generator().manual_seed(random_seed)
