@@ -138,7 +138,7 @@ def render():
                 # Initialize extractor
                 device_type = device if device != "auto" else None
                 extractor = RAFTFlowExtractor(
-                    model_type=model_type,
+                    model_size=model_type,
                     device=device_type
                 )
             
@@ -255,7 +255,7 @@ def render():
             with st.spinner("Initializing RAFT model..."):
                 device_type = device if device != "auto" else None
                 extractor = RAFTFlowExtractor(
-                    model_type=model_type,
+                    model_size=model_type,
                     device=device_type
                 )
             
