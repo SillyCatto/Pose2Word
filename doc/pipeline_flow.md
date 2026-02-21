@@ -76,7 +76,7 @@ The user selects a landmark method, optionally enables Normalization/Localizatio
 4. Raw landmarks are saved in session state for **visualization**.
 5. **Transformation pass** (if normalization or localization is enabled):
    - Landmarks are extracted again.
-   - Localization centers all coordinates relative to the mid-hip point.
+   - Localization uses multiple origins: pose → mid-hip, each hand → its wrist.
    - Normalization scales all values to [0, 1] range.
    - Transformed landmarks are saved separately for **data export**.
 
