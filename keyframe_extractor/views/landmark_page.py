@@ -57,7 +57,7 @@ def render():
         localize_landmarks = st.checkbox(
             "Localize Landmarks",
             value=False,
-            help="Translate landmarks so mid-chest (between shoulders) is at the origin.",
+            help="Multi-origin localization: pose → mid-hip, each hand → its wrist.",
         )
 
     num_frames_target = st.slider(

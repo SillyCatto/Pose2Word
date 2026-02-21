@@ -165,17 +165,38 @@ Where `min` and `max` are computed across all frames for each feature dimension.
 
 ### Localization
 
-**What it does:** Translates all landmarks so the **body center** is at the origin `(0, 0, 0)`.
+**What it does:** Multi-origin (hierarchical) localization that separates two independent phonological dimensions of sign language: *signing space* (where the hands/arms are relative to the body) and *handshape* (finger configuration independent of arm position).
 
-**How it works:**
-1. Find the body center = average of left hip (landmark 23) and right hip (landmark 24):
-   ```
-   center = (left_hip_xyz + right_hip_xyz) / 2
-   ```
-2. Subtract this center from the `(x, y, z)` coordinates of every landmark (pose and hands).
-3. The `visibility` value of pose landmarks is not affected.
+**How it works — three origins:**
 
-**Why use it:** Makes the data **translation-invariant**. If the signer stands on the left side of the frame vs. the right side, the landmark values will still be the same because everything is relative to the body center.
+1. **Pose landmarks (33 × 4) → mid-hip origin:**
+   ```
+   hip_center = (left_hip_xyz + right_hip_xyz) / 2
+   pose_landmark[i].xyz -= hip_center
+   ```
+   Makes pose data translation-invariant (signer position in the frame doesn't matter). The arm/shoulder/elbow positions relative to the torso are preserved, capturing *where* the hands are in signing space.
+
+2. **Left hand landmarks (21 × 3) → left wrist origin (pose landmark 15):**
+   ```
+   left_hand_landmark[i].xyz -= left_wrist_xyz
+   ```
+   Captures hand *shape* independent of arm pose.
+
+3. **Right hand landmarks (21 × 3) → right wrist origin (pose landmark 16):**
+   ```
+   right_hand_landmark[i].xyz -= right_wrist_xyz
+   ```
+   Same reasoning as left hand.
+
+**Why this scheme:**
+- The pose skeleton (hip-centred) tells the model *where* the hands are in space — a core phonological parameter ("location" / "movement").
+- The hand landmarks (wrist-centred) tell the model *what shape* the hand is making — another core parameter ("handshape").
+- These two representations are cleanly separated, so the model doesn't have to learn to disentangle them.
+
+**Edge cases:**
+- Frames where pose was not detected (both hips zero) are left untouched.
+- Hand landmarks are only wrist-localised when the corresponding wrist has a non-zero position; otherwise they keep their raw values.
+- The `visibility` value of pose landmarks is not affected.
 
 **Requirements:** Only works when pose landmarks are available (methods: "MediaPipe Pose" or "MediaPipe Pose + Hands").
 
