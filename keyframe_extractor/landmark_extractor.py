@@ -75,48 +75,69 @@ def _normalize_landmarks(landmarks: np.ndarray) -> np.ndarray:
 
 def _localize_landmarks(landmarks: np.ndarray) -> np.ndarray:
     """
-    Translates all landmarks so the body center (average of left hip and right hip)
-    is at the origin (0, 0, 0). This makes landmark data translation-invariant.
+    Multi-origin (hierarchical) localization for sign-language landmarks.
 
-    Uses Pose landmarks 23 (left hip) and 24 (right hip).
-    Each pose landmark has 4 values (x, y, z, visibility), so:
-      - Left hip x starts at index 23*4 = 92
-      - Right hip x starts at index 24*4 = 96
+    This separates two independent phonological dimensions of sign:
+      • **Signing space** — where the hands/arms move relative to the body.
+      • **Handshape** — the finger configuration, independent of arm position.
+
+    Origins used:
+      1. Pose landmarks (33 × 4) → translated relative to the **mid-hip** center
+         (average of landmark 23 left hip and 24 right hip).  This makes pose
+         data translation-invariant (signer position in frame doesn't matter).
+      2. Left hand landmarks (21 × 3) → translated relative to the **left wrist**
+         (pose landmark 15).  Captures hand *shape* independent of arm pose.
+      3. Right hand landmarks (21 × 3) → translated relative to the **right wrist**
+         (pose landmark 16).  Same reasoning.
+
+    Visibility values of pose landmarks are not affected.
+    Frames where pose was not detected (both hips zero) are left untouched.
+    Hand landmarks are only wrist-localised when the corresponding wrist has a
+    non-zero position; otherwise they keep their raw values.
     """
     localized = landmarks.copy()
+
+    # Pose landmark indices (each landmark has 4 values: x, y, z, visibility)
+    _LEFT_HIP_IDX = 23 * POSE_VALUES_PER_LANDMARK   # 92
+    _RIGHT_HIP_IDX = 24 * POSE_VALUES_PER_LANDMARK  # 96
+    _LEFT_WRIST_IDX = 15 * POSE_VALUES_PER_LANDMARK  # 60
+    _RIGHT_WRIST_IDX = 16 * POSE_VALUES_PER_LANDMARK  # 64
 
     for i in range(localized.shape[0]):
         frame = localized[i]
 
-        # Extract hip positions (x, y, z only, skip visibility)
-        left_hip_idx = 23 * POSE_VALUES_PER_LANDMARK  # 92
-        right_hip_idx = 24 * POSE_VALUES_PER_LANDMARK  # 96
+        # --- 1. Pose → mid-hip origin ---
+        left_hip = frame[_LEFT_HIP_IDX: _LEFT_HIP_IDX + 3]
+        right_hip = frame[_RIGHT_HIP_IDX: _RIGHT_HIP_IDX + 3]
 
-        left_hip = frame[left_hip_idx: left_hip_idx + 3]
-        right_hip = frame[right_hip_idx: right_hip_idx + 3]
-
-        # If both hips are zero (no pose detected), skip
+        # If both hips are zero (no pose detected), skip entire frame
         if np.all(left_hip == 0) and np.all(right_hip == 0):
             continue
 
-        center = (left_hip + right_hip) / 2.0
+        hip_center = (left_hip + right_hip) / 2.0
 
-        # Shift pose landmarks (x, y, z for each of 33 landmarks; skip visibility)
+        # Shift all 33 pose landmarks (x, y, z; skip visibility)
         for j in range(NUM_POSE_LANDMARKS):
             base = j * POSE_VALUES_PER_LANDMARK
-            frame[base: base + 3] -= center
+            frame[base: base + 3] -= hip_center
 
-        # Shift left hand landmarks
-        offset = POSE_FEATURE_COUNT
-        for j in range(NUM_HAND_LANDMARKS):
-            base = offset + j * HAND_VALUES_PER_LANDMARK
-            frame[base: base + 3] -= center
+        # --- 2. Left hand → left wrist origin ---
+        # Use the *original* (pre-shift) wrist position for hand localization,
+        # because hand coords are still in the original coordinate space.
+        left_wrist_orig = landmarks[i, _LEFT_WRIST_IDX: _LEFT_WRIST_IDX + 3]
+        lh_offset = POSE_FEATURE_COUNT
+        if not np.all(left_wrist_orig == 0):
+            for j in range(NUM_HAND_LANDMARKS):
+                base = lh_offset + j * HAND_VALUES_PER_LANDMARK
+                frame[base: base + 3] -= left_wrist_orig
 
-        # Shift right hand landmarks
-        offset = POSE_FEATURE_COUNT + HAND_FEATURE_COUNT
-        for j in range(NUM_HAND_LANDMARKS):
-            base = offset + j * HAND_VALUES_PER_LANDMARK
-            frame[base: base + 3] -= center
+        # --- 3. Right hand → right wrist origin ---
+        right_wrist_orig = landmarks[i, _RIGHT_WRIST_IDX: _RIGHT_WRIST_IDX + 3]
+        rh_offset = POSE_FEATURE_COUNT + HAND_FEATURE_COUNT
+        if not np.all(right_wrist_orig == 0):
+            for j in range(NUM_HAND_LANDMARKS):
+                base = rh_offset + j * HAND_VALUES_PER_LANDMARK
+                frame[base: base + 3] -= right_wrist_orig
 
         localized[i] = frame
 
