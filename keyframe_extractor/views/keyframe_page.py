@@ -17,6 +17,7 @@ from algorithms import (
     draw_quantization_grid,
 )
 from file_utils import save_frames_to_folder
+from folder_browser import folder_input_with_browse
 
 
 def init_session_state():
@@ -110,10 +111,11 @@ def _display_extracted_frames(algo_choice):
     st.divider()
 
     # --- SAVE FRAMES BUTTON ---
-    st.text_input(
+    folder_input_with_browse(
         "Output folder path for keyframes",
-        key="kf_output_folder",
+        session_key="kf_output_folder",
         placeholder="/absolute/path/to/output",
+        dialog_title="Select Output Folder for Keyframes",
     )
 
     if st.button("💾 Save Frames to Folder"):

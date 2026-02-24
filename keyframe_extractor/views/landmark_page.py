@@ -16,6 +16,7 @@ from landmark_extractor import (
     draw_landmarks_on_frames,
 )
 from data_exporter import landmarks_to_numpy, save_landmarks_as_npy
+from folder_browser import folder_input_with_browse
 
 
 def init_session_state():
@@ -85,14 +86,14 @@ def _render_folder_loader():
     st.subheader("📂 Load Keyframes")
     st.caption("Select a folder containing extracted keyframe images (.png or .jpg).")
 
-    folder_path = st.text_input(
+    folder_path = folder_input_with_browse(
         "Keyframes folder path",
-        value=st.session_state.get("lm_selected_folder") or "",
+        session_key="lm_selected_folder",
         placeholder="/absolute/path/to/keyframes",
+        dialog_title="Select Keyframes Folder",
     )
 
     if folder_path:
-        st.session_state["lm_selected_folder"] = folder_path
         if st.button("📥 Load Keyframes"):
             _load_keyframes_from_folder()
     else:
@@ -209,10 +210,11 @@ def _render_landmark_results(landmark_choice):
         )
 
     # Save as .npy
-    st.text_input(
+    folder_input_with_browse(
         "Output folder path for .npy",
-        key="lm_save_folder",
+        session_key="lm_save_folder",
         placeholder="/absolute/path/to/output",
+        dialog_title="Select Output Folder for Landmarks",
     )
 
     if st.button("💾 Save Landmarks as .npy"):
