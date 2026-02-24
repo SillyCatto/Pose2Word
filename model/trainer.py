@@ -263,7 +263,8 @@ class Trainer:
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "best_val_acc": self.best_val_acc,
-            "history": self.history
+            "history": self.history,
+            "config": getattr(self, "config", {}),
         }
         
         if self.scheduler:
@@ -359,6 +360,19 @@ def train_model(
         scheduler=scheduler,
         use_mixed_precision=True
     )
+    
+    # Store config so checkpoints include model architecture info
+    trainer.config = {
+        "model_type": model_type,
+        "num_classes": num_classes,
+        "hidden_dim": 256,
+        "landmarks_dir": str(landmarks_dir),
+        "flow_dir": str(flow_dir) if flow_dir else None,
+        "batch_size": batch_size,
+        "num_epochs": num_epochs,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+    }
     
     # Train
     trainer.train(num_epochs=num_epochs)

@@ -75,10 +75,7 @@ class RAFTFlowExtractor:
         processed = []
         
         for frame in frames:
-            # Convert BGR to RGB if needed
-            if frame.shape[2] == 3:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
+            # Frames are expected in RGB format already.
             # Resize
             frame = cv2.resize(frame, target_size[::-1])  # cv2 uses (W, H)
             

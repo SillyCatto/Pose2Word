@@ -518,9 +518,19 @@ def render_inference_tab():
             if is_video:
                 # Extract landmarks from video
                 with st.spinner("Extracting landmarks from video..."):
-                    from landmark_extractor import extract_video_landmarks
+                    from landmark_extractor import extract_landmarks_from_frames
+                    from data_exporter import landmarks_to_numpy
+                    from video_utils import get_frames_from_video
                     
-                    landmarks = extract_video_landmarks(input_data)
+                    video_frames = get_frames_from_video(input_data)
+                    if not video_frames:
+                        st.error("Failed to read video frames!")
+                        return
+                    
+                    raw_landmarks = extract_landmarks_from_frames(
+                        video_frames, method="MediaPipe Pose + Hands"
+                    )
+                    landmarks = landmarks_to_numpy(raw_landmarks, num_frames=30)
                     
                     if landmarks is None or len(landmarks) == 0:
                         st.error("Failed to extract landmarks from video!")
@@ -544,8 +554,9 @@ def render_inference_tab():
                         cap.release()
                         
                         # Extract flow
-                        extractor = RAFTFlowExtractor(model_type=flow_model, device=device_type)
-                        flow_features = extractor.extract_global_flow_features(frames, feature_dim=32)
+                        extractor = RAFTFlowExtractor(model_size=flow_model, device=device_type)
+                        flows = extractor.extract_flow_from_frames(frames, return_magnitude=True)
+                        flow_features = extractor.extract_global_flow_features(flows, pool_size=(4, 4))
                         
                         st.success(f"✓ Extracted flow: {flow_features.shape}")
             
@@ -559,25 +570,20 @@ def render_inference_tab():
             with st.spinner("Initializing model..."):
                 from sign_classifier import LSTMSignClassifier, TransformerSignClassifier, HybridSignClassifier
                 
-                use_flow_features = flow_features is not None
-                
                 if model_type == "lstm":
                     model = LSTMSignClassifier(
                         num_classes=num_classes,
                         hidden_dim=hidden_dim,
-                        use_flow=use_flow_features
                     )
                 elif model_type == "transformer":
                     model = TransformerSignClassifier(
                         num_classes=num_classes,
                         d_model=hidden_dim,
-                        use_flow=use_flow_features
                     )
                 else:  # hybrid
                     model = HybridSignClassifier(
                         num_classes=num_classes,
                         hidden_dim=hidden_dim,
-                        use_flow=use_flow_features
                     )
                 
                 # Load weights
@@ -591,11 +597,13 @@ def render_inference_tab():
                     # Prepare input
                     landmarks_tensor = torch.from_numpy(landmarks).float().unsqueeze(0).to(device_obj)
                     
-                    if use_flow_features and flow_features is not None:
+                    if flow_features is not None:
                         flow_tensor = torch.from_numpy(flow_features).float().unsqueeze(0).to(device_obj)
-                        logits = model(landmarks_tensor, flow_tensor)
                     else:
-                        logits = model(landmarks_tensor)
+                        # Models require flow input; provide zeros
+                        flow_tensor = torch.zeros(1, landmarks.shape[0] - 1, 32).to(device_obj)
+                    
+                    logits = model(landmarks_tensor, flow_tensor)
                     
                     # Get probabilities
                     probs = torch.softmax(logits, dim=-1)
