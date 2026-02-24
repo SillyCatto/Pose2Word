@@ -367,8 +367,11 @@ ALGORITHM_MAP = {
 }
 
 ALGORITHM_NAMES = list(ALGORITHM_MAP.keys()) + [
-    "Relative Quantization (Paper Implementation)"
+    "Relative Quantization (Paper Implementation)",
+    "RAFT Optical Flow (Deep Learning)",
 ]
+
+RAFT_ALGORITHM_NAME = "RAFT Optical Flow (Deep Learning)"
 
 def draw_quantization_grid(frame, grid_size=10):
     """Draws a 10×10 green grid on the frame and marks the center with a red dot."""

@@ -5,19 +5,26 @@ Extract keyframes from sign language videos for dataset preparation.
 """
 
 import os
+import sys
 import tempfile
+from pathlib import Path
 
+import numpy as np
 import streamlit as st
 
 from video_utils import get_frames_from_video
 from algorithms import (
     ALGORITHM_MAP,
     ALGORITHM_NAMES,
+    RAFT_ALGORITHM_NAME,
     uniform_sampling,
     draw_quantization_grid,
 )
 from file_utils import save_frames_to_folder
 from folder_browser import folder_input_with_browse
+
+# Make sure the model directory is on the path for RAFT imports
+sys.path.append(str(Path(__file__).parent.parent.parent / "model"))
 
 
 def init_session_state():
@@ -38,13 +45,42 @@ def render():
 
     st.caption("Extract keyframes from sign language videos for dataset preparation.")
 
-    # --- CONTROLS ---
+    # --- ALGORITHM SELECTOR ---
     keyframe_algo_choice = st.selectbox(
         "Keyframe Extraction Algorithm", ALGORITHM_NAMES
     )
-    num_frames_target = st.slider(
-        "Target Number of Frames", 10, 50, 30, key="kf_num_frames"
+
+    is_raft = keyframe_algo_choice == RAFT_ALGORITHM_NAME
+
+    # --- TARGET FRAME COUNT (all algorithms, including RAFT) ---
+    num_frames_target = st.number_input(
+        "Target Number of Frames",
+        min_value=2,
+        max_value=500,
+        value=10,
+        step=1,
+        key="kf_num_frames",
+        help="Enter any value from 2 upward — type it in directly.",
     )
+
+    # --- RAFT-ONLY: model/device ---
+    raft_config = {}
+    if is_raft:
+        col1, col2 = st.columns(2)
+        with col1:
+            raft_config["model_type"] = st.selectbox(
+                "RAFT Model",
+                options=["small", "large"],
+                help="Small: Faster | Large: More accurate",
+                key="kf_raft_model_type",
+            )
+        with col2:
+            raft_config["device"] = st.selectbox(
+                "Device",
+                options=["auto", "cuda", "mps", "cpu"],
+                help="Processing device",
+                key="kf_raft_device",
+            )
 
     # --- FILE UPLOAD ---
     uploaded_file = st.file_uploader(
@@ -54,7 +90,7 @@ def render():
     if uploaded_file is None:
         return
 
-    # Save temp file
+    # Save to temp file
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     tfile.write(uploaded_file.read())
     tfile.close()
@@ -72,11 +108,16 @@ def render():
 
         # --- EXTRACTION BUTTON ---
         if st.button("Extract Keyframes"):
-            _extract_keyframes(
-                frames, keyframe_algo_choice, num_frames_target, uploaded_file.name
-            )
+            if is_raft:
+                _extract_raft_keyframes(
+                    frames, num_frames_target, raft_config, uploaded_file.name
+                )
+            else:
+                _extract_keyframes(
+                    frames, keyframe_algo_choice, num_frames_target, uploaded_file.name
+                )
 
-        # --- DISPLAY & ACTIONS ---
+        # --- DISPLAY & ACTIONS (same for every algorithm) ---
         if st.session_state["kf_extracted_frames"] is not None:
             _display_extracted_frames(keyframe_algo_choice)
 
@@ -87,6 +128,56 @@ def render():
         if os.path.exists(video_path):
             os.remove(video_path)
 
+
+# =============================================================================
+# RAFT keyframe selection
+# =============================================================================
+
+def _extract_raft_keyframes(frames, num_frames_target, raft_config, video_name):
+    """Score frames with RAFT flow magnitude, return the top N actual video frames."""
+    st.session_state["kf_video_name"] = video_name
+
+    try:
+        from raft_flow_extractor import RAFTFlowExtractor
+    except ImportError as e:
+        st.error(f"Could not import RAFTFlowExtractor: {e}")
+        return
+
+    try:
+        device_arg = raft_config["device"] if raft_config["device"] != "auto" else None
+
+        with st.spinner("Initialising RAFT model…"):
+            extractor = RAFTFlowExtractor(
+                model_size=raft_config["model_type"],
+                device=device_arg,
+            )
+
+        st.info(f"Using device: **{extractor.device}**")
+
+        with st.spinner("Extracting optical flow…"):
+            flows = extractor.extract_flow_from_frames(frames, return_magnitude=True)
+
+        # Score each frame by mean flow magnitude; pad to match frame count
+        scores = np.array([float(np.mean(np.squeeze(m))) for m in flows])
+        scores = np.append(scores, 0.0)
+
+        top_indices = np.argsort(scores)[::-1][:num_frames_target]
+        top_indices = np.sort(top_indices)
+        selected_frames = [frames[i] for i in top_indices]
+
+        st.session_state["kf_extracted_frames"] = selected_frames
+        st.session_state["kf_extracted_indices"] = top_indices
+
+        st.success(f"Extracted {len(selected_frames)} keyframes using RAFT Optical Flow.")
+
+    except Exception as e:
+        st.error(f"RAFT extraction failed: {e}")
+        st.exception(e)
+
+
+# =============================================================================
+# Standard keyframe helpers
+# =============================================================================
 
 def _extract_keyframes(frames, algo_choice, num_frames_target, video_name):
     """Extract keyframes using the selected algorithm."""
