@@ -32,7 +32,7 @@ def init_session_state():
     if "lm_raw_landmarks" not in st.session_state:
         st.session_state["lm_raw_landmarks"] = None
     if "lm_selected_folder" not in st.session_state:
-        st.session_state["lm_selected_folder"] = None
+        st.session_state["lm_selected_folder"] = ""
     if "lm_save_folder" not in st.session_state:
         st.session_state["lm_save_folder"] = ""
 

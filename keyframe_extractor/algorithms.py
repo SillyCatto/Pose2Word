@@ -372,6 +372,7 @@ ALGORITHM_NAMES = list(ALGORITHM_MAP.keys()) + [
 
 def draw_quantization_grid(frame, grid_size=10):
     """Draws a 10×10 green grid on the frame and marks the center with a red dot."""
+    frame = frame.copy()
     height, width, _ = frame.shape
     grid_color = (0, 255, 0)  # Green
     center_color = (0, 0, 255)  # Red
