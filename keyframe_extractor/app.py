@@ -15,14 +15,20 @@ Business logic is delegated to separate modules:
 
 import streamlit as st
 
-from views import keyframe_page, landmark_page, flow_page, training_page, manual_keyframe_page
+from views import (
+    keyframe_page,
+    landmark_page,
+    flow_page,
+    manual_keyframe_page,
+    preprocessing_page,
+)
 
 
 # =============================================================================
 # PAGE CONFIG
 # =============================================================================
 st.set_page_config(
-    page_title="WLASL Dataset Preparation Tool",
+    page_title="WLASL Keyframe Extraction Tool",
     page_icon="🖐️",
     layout="wide",
 )
@@ -56,18 +62,26 @@ st.markdown(
 # =============================================================================
 # MAIN APP
 # =============================================================================
-st.title("🖐️ WLASL Dataset Preparation Tool")
+st.title("🖐️ WLASL Keyframe Extraction Tool")
 
 # Create tabs
-tab_keyframe, tab_landmark, tab_flow, tab_training, tab_manual = st.tabs([
-    "📹 Keyframe Extractor", 
-    "🦴 Landmark Extractor",
-    "🌊 Flow Extractor",
-    "🤖 Model Training",
-    "🖱️ Manual Keyframe Selection",
-])
+tab_preprocess, tab_manual, tab_keyframe, tab_landmark, tab_flow = st.tabs(
+    [
+        "🔧 Video Preprocessing",
+        "🖱️ Manual Keyframe Selection",
+        "📹 Keyframe Extractor",
+        "🦴 Landmark Extractor",
+        "🌊 Flow Extractor",
+    ]
+)
 
 # Render pages within tabs
+with tab_preprocess:
+    preprocessing_page.render()
+
+with tab_manual:
+    manual_keyframe_page.render()
+
 with tab_keyframe:
     keyframe_page.render()
 
@@ -76,9 +90,3 @@ with tab_landmark:
 
 with tab_flow:
     flow_page.render()
-
-with tab_training:
-    training_page.render()
-
-with tab_manual:
-    manual_keyframe_page.render()

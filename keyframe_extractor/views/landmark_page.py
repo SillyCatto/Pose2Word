@@ -10,13 +10,13 @@ import cv2
 import numpy as np
 import streamlit as st
 
-from landmark_extractor import (
+from core.landmark_extractor import (
     LANDMARK_METHODS,
     extract_landmarks_from_frames,
     draw_landmarks_on_frames,
 )
-from data_exporter import landmarks_to_numpy, save_landmarks_as_npy
-from folder_browser import folder_input_with_browse
+from core.data_exporter import landmarks_to_numpy, save_landmarks_as_npy
+from ._folder_browser import folder_input_with_browse
 
 
 def init_session_state():

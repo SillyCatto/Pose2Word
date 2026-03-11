@@ -12,22 +12,22 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
-from video_utils import (
+from core.video_utils import (
     get_frames_from_video,
     get_video_info,
     preprocess_frames,
     VALID_SIZES,
 )
-from algorithms import (
+from core.algorithms import (
     ALGORITHM_MAP,
     ALGORITHM_NAMES,
     RAFT_ALGORITHM_NAME,
     draw_quantization_grid,
 )
-from file_utils import save_frames_to_folder
-from folder_browser import folder_input_with_browse
+from core.file_utils import save_frames_to_folder
+from ._folder_browser import folder_input_with_browse
 
-# Make sure the model directory is on the path for RAFT imports
+# Add model/ directory to sys.path for the optional RAFT extractor
 sys.path.append(str(Path(__file__).parent.parent.parent / "model"))
 
 
@@ -126,7 +126,7 @@ def render():
                 value=True,
                 key="kf_resample_fps",
                 help="Skip frames so the video is treated as exactly 30 fps. "
-                     "Videos already at ≤30 fps are unaffected.",
+                "Videos already at ≤30 fps are unaffected.",
             )
 
         with col2:
@@ -146,7 +146,10 @@ def render():
             if run_clahe:
                 clahe_clip = st.slider(
                     "CLAHE clip limit",
-                    min_value=1.0, max_value=8.0, value=2.0, step=0.5,
+                    min_value=1.0,
+                    max_value=8.0,
+                    value=2.0,
+                    step=0.5,
                     key="kf_clahe_clip",
                 )
             else:
@@ -162,7 +165,11 @@ def render():
             return
 
         # Apply preprocessing pipeline
-        rescale_size = VALID_SIZES.get(rescale_choice) if rescale_choice != "No rescaling" else None
+        rescale_size = (
+            VALID_SIZES.get(rescale_choice)
+            if rescale_choice != "No rescaling"
+            else None
+        )
         frames = preprocess_frames(
             frames,
             rescale_size=rescale_size,
@@ -172,15 +179,25 @@ def render():
         )
 
         pre_info = []
-        if rescale_size:   pre_info.append(f"resized to {rescale_size[0]}×{rescale_size[1]}")
-        if resample_fps:   pre_info.append("30 fps")
-        if run_contrast:   pre_info.append("contrast normalised")
-        if run_clahe:      pre_info.append(f"CLAHE clip={clahe_clip}")
+        if rescale_size:
+            pre_info.append(f"resized to {rescale_size[0]}×{rescale_size[1]}")
+        if resample_fps:
+            pre_info.append("30 fps")
+        if run_contrast:
+            pre_info.append("contrast normalised")
+        if run_clahe:
+            pre_info.append(f"CLAHE clip={clahe_clip}")
         if pre_info:
-            st.success(f"✅ Preprocessing applied: {', '.join(pre_info)}  → {len(frames)} frames")
+            st.success(
+                f"✅ Preprocessing applied: {', '.join(pre_info)}  → {len(frames)} frames"
+            )
 
         st.subheader(f"Preprocessed Video ({len(frames)} frames)")
-        st.image(frames[len(frames) // 2], caption="Middle Frame Preview (after preprocessing)", width=400)
+        st.image(
+            frames[len(frames) // 2],
+            caption="Middle Frame Preview (after preprocessing)",
+            width=400,
+        )
 
         # --- EXTRACTION BUTTON ---
         if st.button("Extract Keyframes"):
@@ -208,6 +225,7 @@ def render():
 # =============================================================================
 # RAFT keyframe selection
 # =============================================================================
+
 
 def _extract_raft_keyframes(frames, num_frames_target, raft_config, video_name):
     """Score frames with RAFT flow magnitude, return the top N actual video frames."""
@@ -244,7 +262,9 @@ def _extract_raft_keyframes(frames, num_frames_target, raft_config, video_name):
         st.session_state["kf_extracted_frames"] = selected_frames
         st.session_state["kf_extracted_indices"] = top_indices
 
-        st.success(f"Extracted {len(selected_frames)} keyframes using RAFT Optical Flow.")
+        st.success(
+            f"Extracted {len(selected_frames)} keyframes using RAFT Optical Flow."
+        )
 
     except Exception as e:
         st.error(f"RAFT extraction failed: {e}")
@@ -254,6 +274,7 @@ def _extract_raft_keyframes(frames, num_frames_target, raft_config, video_name):
 # =============================================================================
 # Standard keyframe helpers
 # =============================================================================
+
 
 def _extract_keyframes(frames, algo_choice, num_frames_target, video_name):
     """Extract keyframes using the selected algorithm."""

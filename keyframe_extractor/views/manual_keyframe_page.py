@@ -13,7 +13,6 @@ Ground truth is saved as:
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -21,26 +20,25 @@ import cv2
 import numpy as np
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from video_utils import get_frames_from_video, get_video_info, preprocess_frames, VALID_SIZES
-from folder_browser import folder_input_with_browse
+from core.video_utils import get_frames_from_video, get_video_info
+from ._folder_browser import folder_input_with_browse
 
 
 # ── session-state keys ───────────────────────────────────────────────────────
-_ALL_FRAMES   = "mk_all_frames"
-_SELECTED     = "mk_selected_indices"   # set[int]
-_VIDEO_NAME   = "mk_video_name"
-_VIDEO_INFO   = "mk_video_info"
-_OUTPUT_DIR   = "mk_output_dir"
+_ALL_FRAMES = "mk_all_frames"
+_SELECTED = "mk_selected_indices"  # set[int]
+_VIDEO_NAME = "mk_video_name"
+_VIDEO_INFO = "mk_video_info"
+_OUTPUT_DIR = "mk_output_dir"
 
 
 def _init():
     defaults = {
-        _ALL_FRAMES:  None,
-        _SELECTED:    set(),
-        _VIDEO_NAME:  "",
-        _VIDEO_INFO:  {},
-        _OUTPUT_DIR:  "",
+        _ALL_FRAMES: None,
+        _SELECTED: set(),
+        _VIDEO_NAME: "",
+        _VIDEO_INFO: {},
+        _OUTPUT_DIR: "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -48,6 +46,7 @@ def _init():
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _toggle(idx: int):
     sel: set = st.session_state[_SELECTED]
@@ -58,10 +57,10 @@ def _toggle(idx: int):
 
 
 def _save_ground_truth(output_dir: str) -> tuple[bool, str]:
-    frames: list     = st.session_state[_ALL_FRAMES]
-    sel_indices      = sorted(st.session_state[_SELECTED])
-    video_name: str  = st.session_state[_VIDEO_NAME]
-    info: dict       = st.session_state[_VIDEO_INFO]
+    frames: list = st.session_state[_ALL_FRAMES]
+    sel_indices = sorted(st.session_state[_SELECTED])
+    video_name: str = st.session_state[_VIDEO_NAME]
+    info: dict = st.session_state[_VIDEO_INFO]
 
     if not sel_indices:
         return False, "No frames selected."
@@ -70,7 +69,7 @@ def _save_ground_truth(output_dir: str) -> tuple[bool, str]:
 
     output_dir = os.path.expanduser(output_dir)
     video_stem = Path(video_name).stem
-    save_root  = Path(output_dir) / video_stem
+    save_root = Path(output_dir) / video_stem
     frames_dir = save_root / "frames"
 
     try:
@@ -85,10 +84,10 @@ def _save_ground_truth(output_dir: str) -> tuple[bool, str]:
 
     # Save JSON manifest
     manifest = {
-        "video":            video_name,
-        "fps":              info.get("fps", 0),
-        "total_frames":     len(frames),
-        "selected_count":   len(sel_indices),
+        "video": video_name,
+        "fps": info.get("fps", 0),
+        "total_frames": len(frames),
+        "selected_count": len(sel_indices),
         "selected_indices": sel_indices,
     }
     with open(save_root / "ground_truth.json", "w") as f:
@@ -102,10 +101,13 @@ def _save_ground_truth(output_dir: str) -> tuple[bool, str]:
 
 # ── main render ──────────────────────────────────────────────────────────────
 
+
 def render():
     _init()
 
-    st.caption("Upload a video, pick your keyframes manually, and save them as ground-truth data.")
+    st.caption(
+        "Upload a video, pick your keyframes manually, and save them as ground-truth data."
+    )
 
     # ── 1. VIDEO UPLOAD ───────────────────────────────────────────────────────
     uploaded = st.file_uploader(
@@ -116,26 +118,8 @@ def render():
         st.info("Upload a video to get started.")
         return
 
-    # ── 2. PREPROCESSING OPTIONS ──────────────────────────────────────────────
-    with st.expander("⚙️ Preprocessing (optional)", expanded=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            rescale_choice = st.selectbox(
-                "Resize frames to",
-                ["No rescaling"] + list(VALID_SIZES.keys()),
-                key="mk_rescale",
-            )
-            resample_fps = st.checkbox(
-                "Resample to 30 fps", value=True, key="mk_fps",
-                help="Skip frames so video is treated as 30 fps."
-            )
-        with col2:
-            run_contrast = st.checkbox("Contrast normalisation", key="mk_contrast")
-            run_clahe    = st.checkbox("CLAHE", key="mk_clahe")
-            clahe_clip   = st.slider("CLAHE clip", 1.0, 8.0, 2.0, 0.5, key="mk_clahe_clip") if run_clahe else 2.0
-
-    # ── 3. LOAD FRAMES (only when video or settings change) ───────────────────
-    load_key = f"{uploaded.name}_{rescale_choice}_{resample_fps}_{run_contrast}_{run_clahe}_{clahe_clip}"
+    # ── 2. LOAD FRAMES (only when video changes) ──────────────────────────────
+    load_key = uploaded.name
 
     if st.session_state.get("mk_load_key") != load_key:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -143,38 +127,26 @@ def render():
             tmp_path = tmp.name
 
         with st.spinner("Reading video…"):
-            target_fps = 30.0 if resample_fps else 0
-            info       = get_video_info(tmp_path)
-            frames     = get_frames_from_video(tmp_path, target_fps=target_fps)
+            info = get_video_info(tmp_path)
+            frames = get_frames_from_video(tmp_path)
 
         os.remove(tmp_path)
 
-        rescale_size = VALID_SIZES.get(rescale_choice) if rescale_choice != "No rescaling" else None
-        if rescale_size or run_contrast or run_clahe:
-            with st.spinner("Applying preprocessing…"):
-                frames = preprocess_frames(
-                    frames,
-                    rescale_size=rescale_size,
-                    run_contrast_norm=run_contrast,
-                    run_clahe=run_clahe,
-                    clahe_clip=clahe_clip,
-                )
-
-        st.session_state[_ALL_FRAMES]  = frames
-        st.session_state[_SELECTED]    = set()
-        st.session_state[_VIDEO_NAME]  = uploaded.name
-        st.session_state[_VIDEO_INFO]  = info
+        st.session_state[_ALL_FRAMES] = frames
+        st.session_state[_SELECTED] = set()
+        st.session_state[_VIDEO_NAME] = uploaded.name
+        st.session_state[_VIDEO_INFO] = info
         st.session_state["mk_load_key"] = load_key
 
     frames: list = st.session_state[_ALL_FRAMES]
-    info: dict   = st.session_state[_VIDEO_INFO]
+    info: dict = st.session_state[_VIDEO_INFO]
     selected: set = st.session_state[_SELECTED]
 
     if not frames:
         st.error("Could not read any frames from this video.")
         return
 
-    # ── 4. VIDEO SUMMARY ─────────────────────────────────────────────────────
+    # ── 3. VIDEO SUMMARY ─────────────────────────────────────────────────────
     h, w = frames[0].shape[:2]
     st.caption(
         f"📹 **{uploaded.name}**  |  "
@@ -182,7 +154,7 @@ def render():
         f"**{len(frames)} frames** loaded @ {w}×{h}"
     )
 
-    # ── 5. QUICK SELECTION HELPERS ────────────────────────────────────────────
+    # ── 4. QUICK SELECTION HELPERS ────────────────────────────────────────────
     col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 2])
     with col_a:
         if st.button("✅ Select All"):
@@ -193,7 +165,14 @@ def render():
             st.session_state[_SELECTED] = set()
             st.rerun()
     with col_c:
-        every_n = st.number_input("Every N frames", min_value=2, max_value=len(frames), value=5, step=1, key="mk_every_n")
+        every_n = st.number_input(
+            "Every N frames",
+            min_value=2,
+            max_value=len(frames),
+            value=5,
+            step=1,
+            key="mk_every_n",
+        )
     with col_d:
         if st.button(f"⚡ Auto-select every {int(every_n)} frames"):
             st.session_state[_SELECTED] = set(range(0, len(frames), int(every_n)))
@@ -202,7 +181,7 @@ def render():
     selected_count = len(selected)
     st.markdown(f"**{selected_count} / {len(frames)} frames selected**")
 
-    # ── 6. FRAME GRID ─────────────────────────────────────────────────────────
+    # ── 5. FRAME GRID ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 🎞️ Click a frame to toggle selection")
     st.caption("🟩 Green border = selected  |  Click again to deselect")
@@ -221,9 +200,14 @@ def render():
                 # Annotate thumbnail with selection border
                 thumb = frames[frame_idx].copy()
                 if is_selected:
-                    border_color = (50, 205, 50)   # green
-                    cv2.rectangle(thumb, (0, 0), (thumb.shape[1]-1, thumb.shape[0]-1),
-                                  border_color, thickness=max(4, thumb.shape[0]//30))
+                    border_color = (50, 205, 50)  # green
+                    cv2.rectangle(
+                        thumb,
+                        (0, 0),
+                        (thumb.shape[1] - 1, thumb.shape[0] - 1),
+                        border_color,
+                        thickness=max(4, thumb.shape[0] // 30),
+                    )
 
                 label = f"{'✅ ' if is_selected else ''}#{frame_idx}"
                 st.image(thumb, caption=label, use_container_width=True)
@@ -236,14 +220,16 @@ def render():
                     _toggle(frame_idx)
                     st.rerun()
 
-    # ── 7. SAVE GROUND TRUTH ──────────────────────────────────────────────────
+    # ── 6. SAVE GROUND TRUTH ──────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("💾 Save Ground Truth")
 
     if selected_count == 0:
         st.warning("Select at least one frame before saving.")
     else:
-        st.success(f"**{selected_count} frames** ready to save: {sorted(selected)[:10]}{'…' if selected_count > 10 else ''}")
+        st.success(
+            f"**{selected_count} frames** ready to save: {sorted(selected)[:10]}{'…' if selected_count > 10 else ''}"
+        )
 
     folder_input_with_browse(
         "Output directory",
@@ -265,10 +251,14 @@ def render():
         else:
             st.error(msg)
 
-    # ── 8. PREVIEW SELECTED FRAMES ────────────────────────────────────────────
+    # ── 7. PREVIEW SELECTED FRAMES ────────────────────────────────────────────
     if selected_count > 0:
-        with st.expander(f"🔍 Preview {selected_count} selected frames", expanded=False):
+        with st.expander(
+            f"🔍 Preview {selected_count} selected frames", expanded=False
+        ):
             prev_cols = st.columns(min(selected_count, 5))
             for i, idx in enumerate(sorted(selected)):
                 with prev_cols[i % 5]:
-                    st.image(frames[idx], caption=f"Frame #{idx}", use_container_width=True)
+                    st.image(
+                        frames[idx], caption=f"Frame #{idx}", use_container_width=True
+                    )
