@@ -17,7 +17,6 @@ from algorithms import (
     ALGORITHM_MAP,
     ALGORITHM_NAMES,
     RAFT_ALGORITHM_NAME,
-    uniform_sampling,
     draw_quantization_grid,
 )
 from file_utils import save_frames_to_folder
@@ -184,7 +183,8 @@ def _extract_keyframes(frames, algo_choice, num_frames_target, video_name):
     st.session_state["kf_video_name"] = video_name
 
     if algo_choice == "Relative Quantization (Paper Implementation)":
-        selected, idxs = uniform_sampling(frames, 5)
+        idxs = np.linspace(0, len(frames) - 1, 5, dtype=int)
+        selected = [frames[i] for i in idxs]
         processed = [draw_quantization_grid(f) for f in selected]
         st.session_state["kf_extracted_frames"] = processed
         st.session_state["kf_extracted_indices"] = idxs

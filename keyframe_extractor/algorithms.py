@@ -9,16 +9,6 @@ import cv2
 import numpy as np
 
 
-def uniform_sampling(frames: list, target_count: int) -> tuple[list, list]:
-    """Uniformly samples frames at equal intervals."""
-    total_frames = len(frames)
-    if total_frames == 0:
-        return [], []
-    indices = np.linspace(0, total_frames - 1, target_count, dtype=int)
-    selected_frames = [frames[i] for i in indices]
-    return selected_frames, indices
-
-
 def motion_based_extraction(frames: list, target_count: int) -> tuple[list, list]:
     """Selects frames with the highest inter-frame motion (absolute difference)."""
     if len(frames) < 2:
@@ -342,7 +332,6 @@ def voxel_spatiotemporal_extraction(
 
 # --- Algorithm registry for clean UI dispatch ---
 ALGORITHM_MAP = {
-    "Uniform Sampling (Standard)": lambda frames, n: uniform_sampling(frames, n),
     "Motion Detection (Action Segments)": lambda frames, n: motion_based_extraction(
         frames, n
     ),
