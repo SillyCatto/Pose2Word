@@ -9,26 +9,6 @@ import cv2
 import numpy as np
 
 
-def motion_based_extraction(frames: list, target_count: int) -> tuple[list, list]:
-    """Selects frames with the highest inter-frame motion (absolute difference)."""
-    if len(frames) < 2:
-        return frames, list(range(len(frames)))
-    gray_frames = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
-    motion_scores = []
-    for i in range(len(gray_frames) - 1):
-        score = np.sum(cv2.absdiff(gray_frames[i], gray_frames[i + 1]))
-        motion_scores.append(score)
-
-    # Pad the last frame score to match length
-    motion_scores.append(0)
-    motion_scores = np.array(motion_scores)
-
-    top_indices = np.argsort(motion_scores)[::-1][:target_count]
-    top_indices = np.sort(top_indices)
-    selected_frames = [frames[i] for i in top_indices]
-    return selected_frames, top_indices
-
-
 def optical_flow_farneback_dense_extraction(
     frames: list, target_count: int
 ) -> tuple[list, list]:
@@ -332,9 +312,6 @@ def voxel_spatiotemporal_extraction(
 
 # --- Algorithm registry for clean UI dispatch ---
 ALGORITHM_MAP = {
-    "Motion Detection (Action Segments)": lambda frames, n: motion_based_extraction(
-        frames, n
-    ),
     "Optical Flow (Motion Magnitude)": lambda frames, n: optical_flow_farneback_dense_extraction(
         frames, n
     ),
