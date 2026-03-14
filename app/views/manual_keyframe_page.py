@@ -292,7 +292,7 @@ def _render_frame_grid(frames: list[np.ndarray]):
             with col:
                 thumb = _make_thumbnail(frames[frame_idx], is_selected)
                 cap = f"{'✅ ' if is_selected else ''}#{frame_idx}"
-                st.image(thumb, caption=cap, use_container_width=True)
+                st.image(thumb, caption=cap, width="stretch")
                 st.button(
                     "Deselect" if is_selected else "Select",
                     key=f"mk_btn_{frame_idx}",
@@ -473,5 +473,5 @@ def render():
                     st.image(
                         frames[idx],
                         caption=f"Frame #{idx}",
-                        use_container_width=True,
+                        width="stretch",
                     )

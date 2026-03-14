@@ -241,5 +241,5 @@ def _display_extracted_frames(algo_choice):
             st.image(
                 frame,
                 caption=f"Frame {st.session_state['kf_extracted_indices'][i]}",
-                use_container_width=True,
+                width="stretch",
             )

@@ -145,7 +145,7 @@ def _render_loaded_frames():
             st.image(
                 frame,
                 caption=f"Frame {st.session_state['lm_frame_indices'][i]}",
-                use_container_width=True,
+                width="stretch",
             )
 
 
@@ -208,7 +208,7 @@ def _render_landmark_results(landmark_choice):
     with st.expander("📊 Preview Landmark Data"):
         st.dataframe(
             landmarks_data,
-            use_container_width=True,
+            width="stretch",
             height=300,
         )
 
@@ -250,5 +250,5 @@ def _render_landmark_results(landmark_choice):
             st.image(
                 vf,
                 caption=f"Frame {st.session_state['lm_frame_indices'][i]}",
-                use_container_width=True,
+                width="stretch",
             )

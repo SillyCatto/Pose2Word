@@ -481,7 +481,7 @@ def _render_preview():
             cols = st.columns(len(sample_idx))
             for i, idx in enumerate(sample_idx):
                 with cols[i]:
-                    st.image(frames[idx], caption=f"#{idx}", use_container_width=True)
+                        st.image(frames[idx], caption=f"#{idx}", width="stretch")
 
         with tab_flow:
             flow_mag = st.session_state[_key("preview_flow_mag")]
@@ -498,7 +498,7 @@ def _render_preview():
                             viz = (mag / mag.max() * 255).astype(np.uint8)
                         else:
                             viz = np.zeros_like(mag, dtype=np.uint8)
-                        st.image(viz, caption=f"#{idx}", use_container_width=True)
+                        st.image(viz, caption=f"#{idx}", width="stretch")
             else:
                 st.info("Optical flow was skipped for this sample.")
 
@@ -510,9 +510,7 @@ def _render_preview():
                 cols = st.columns(len(sample_idx))
                 for i, idx in enumerate(sample_idx):
                     with cols[i]:
-                        st.image(
-                            masks[idx], caption=f"#{idx}", use_container_width=True
-                        )
+                        st.image(masks[idx], caption=f"#{idx}", width="stretch")
             else:
                 st.info("No masks available.")
 
