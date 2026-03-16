@@ -15,9 +15,9 @@ This is critical because:
 
 | File | Purpose |
 |------|---------|
-| `keyframe_extractor/algorithms.py` | All 9 keyframe extraction algorithms |
+| `app/core/algorithms.py` | Keyframe extraction algorithms (including Method D multimodal fusion) |
 | `keyframe_extractor/video_utils.py` | Video I/O (reading frames from video files) |
-| `keyframe_extractor/app.py` | Streamlit UI that lets users choose an algorithm and extract keyframes |
+| `app/views/keyframe_page.py` | Streamlit UI that lets users choose an algorithm and extract keyframes |
 
 ---
 
@@ -219,6 +219,30 @@ This is a **visualization mode**, not a frame selection algorithm for training. 
 
 ---
 
+### 10. Method D - Multimodal Fusion (Recommended Final Approach)
+
+**How it works:**
+Builds a multimodal descriptor per frame, clusters frame-level descriptors, and selects medoids with temporal and quality constraints.
+
+**Algorithm:**
+1. Build `frame_descriptors.npy`-style vectors by concatenating:
+    - `flow_scalar` (dense optical flow magnitude)
+    - `pose_features` (angles and velocity-style pose/hand motion features)
+    - `embedding_pca` (compact appearance embedding from frame content)
+2. Reduce descriptor dimensionality with PCA.
+3. Cluster reduced descriptors (`k = target_count`) using k-means (fallback: spectral clustering).
+4. Pick one medoid per cluster (closest frame to cluster centroid).
+5. Enforce temporal diversity so selected frames cover the full video timeline.
+6. Apply endpoint bias so near-start and near-end frames are included if missing.
+7. Final quality filter removes frames with low hand-keypoint confidence or tiny hand crop coverage, then refills to target count.
+
+**Why this is strong for sign language:**
+- Combines dynamic cues (motion), geometric cues (pose/hand kinematics), and appearance cues (frame embedding).
+- More robust across fast signs, slow signs, and hold-heavy signs than single-signal methods.
+- Improves representative coverage by preventing cluster collapse into one temporal region.
+
+---
+
 ## Algorithm Registry
 
 The file provides an `ALGORITHM_MAP` dictionary and an `ALGORITHM_NAMES` list for clean UI dispatch:
@@ -237,6 +261,7 @@ selected_frames, indices = algo_fn(frames, target_count=30)
 
 | Scenario | Recommended Algorithm |
 |---|---|
+| Best overall quality (recommended) | Method D - Multimodal fusion |
 | Quick extraction, any video | Uniform Sampling |
 | Sign language, fast motion | Motion Detection or Optical Flow |
 | Sign language, noisy video | Farneback Dense Optical Flow |
