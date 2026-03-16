@@ -70,3 +70,23 @@ preprocessed_mini/
 
 - The project originally expected a flat layout (`class/*.npy`).
 - We updated the dataset loader to also support nested layout (`class/sample/keypoints.npy`), which matches the current preprocessing output.
+
+## Training Dry Run
+
+### Quick training command (5 epochs)
+
+```powershell
+uv run python -c "from model.trainer import train_model; train_model(landmarks_dir='preprocessed_mini', flow_dir=None, model_type='lstm', num_classes=2, batch_size=2, num_epochs=5, learning_rate=0.001, save_dir='checkpoints/mini_brother_mother_quick5', device='cpu')"
+```
+
+### Result summary
+
+- Training completed in about 1.41 minutes.
+- Best validation accuracy reached 1.0000 at epoch 4 (on a very small validation split).
+- Best checkpoint saved at:
+	- `checkpoints/mini_brother_mother_quick5/best_model.pth`
+
+### Why this was a dry run
+
+- Dataset size is tiny (6 total samples), so validation metrics can fluctuate heavily.
+- The objective was pipeline verification, not final model quality.
