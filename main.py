@@ -11,6 +11,7 @@ from app.views import (
     keyframe_page,
     landmark_page,
     manual_keyframe_page,
+    predict_page,
     preprocessing_page,
 )
 
@@ -49,16 +50,20 @@ st.markdown(
 # =============================================================================
 # MAIN APP
 # =============================================================================
-st.title("🖐️ WLASL Dataset Preparation Tool")
+st.title("🖐️ WLASL Sign Tool")
 
-tab_preprocess, tab_manual, tab_keyframe, tab_landmark = st.tabs(
+tab_predict, tab_preprocess, tab_manual, tab_keyframe, tab_landmark = st.tabs(
     [
+        "🎯 Predict Sign",
         "🔧 Video Preprocessing",
         "🖱️ Manual Keyframe Selection",
         "📹 Keyframe Extractor",
         "🦴 Landmark Extractor",
     ]
 )
+
+with tab_predict:
+    predict_page.render()
 
 with tab_preprocess:
     preprocessing_page.render()

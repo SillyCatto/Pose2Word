@@ -53,35 +53,44 @@ class SignLanguageDataset(Dataset):
     
     def _load_dataset(self):
         """Load dataset file paths and create class mapping."""
-        # Get all class directories
-        class_dirs = [d for d in self.landmarks_dir.iterdir() if d.is_dir()]
-        class_dirs.sort()
-        
-        self.classes = [d.name for d in class_dirs]
-        self.class_to_idx = {cls: idx for idx, cls in enumerate(self.classes)}
-        
-        # Load all samples
+        # Accept both structures:
+        # 1) class/sample/keypoints.npy (current preprocessing output)
+        # 2) class/*.npy (flat legacy structure)
+        class_dirs = sorted(
+            [d for d in self.landmarks_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+        )
+
+        class_to_files: Dict[str, List[Path]] = {}
         for class_dir in class_dirs:
-            class_name = class_dir.name
+            nested_keypoints = sorted(class_dir.glob("*/keypoints.npy"))
+            flat_npy = sorted(class_dir.glob("*.npy"))
+            landmark_files = nested_keypoints if nested_keypoints else flat_npy
+
+            if landmark_files:
+                class_to_files[class_dir.name] = landmark_files
+
+        self.classes = sorted(class_to_files.keys())
+        self.class_to_idx = {cls: idx for idx, cls in enumerate(self.classes)}
+
+        for class_name in self.classes:
             class_idx = self.class_to_idx[class_name]
-            
-            # Find all landmark files
-            landmark_files = sorted(class_dir.glob("*.npy"))
-            
-            for landmark_file in landmark_files:
-                # Construct corresponding flow file path if needed
+            for landmark_file in class_to_files[class_name]:
+                # Match flow by same relative path when available.
                 flow_file = None
                 if self.flow_dir:
-                    flow_file = self.flow_dir / class_name / landmark_file.name
-                    if not flow_file.exists():
-                        flow_file = None
-                
-                self.samples.append({
-                    "landmark_path": landmark_file,
-                    "flow_path": flow_file,
-                    "class_name": class_name,
-                    "class_idx": class_idx
-                })
+                    rel = landmark_file.relative_to(self.landmarks_dir)
+                    candidate = self.flow_dir / rel
+                    if candidate.exists():
+                        flow_file = candidate
+
+                self.samples.append(
+                    {
+                        "landmark_path": landmark_file,
+                        "flow_path": flow_file,
+                        "class_name": class_name,
+                        "class_idx": class_idx,
+                    }
+                )
     
     def __len__(self) -> int:
         return len(self.samples)

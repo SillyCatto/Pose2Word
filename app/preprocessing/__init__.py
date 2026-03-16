@@ -14,4 +14,5 @@ Transforms raw videos into standardized, feature-rich training data:
 """
 
 from .config import PipelineConfig
-from .runner import PreprocessingPipeline
+
+__all__ = ["PipelineConfig"]

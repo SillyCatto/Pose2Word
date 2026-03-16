@@ -10,7 +10,10 @@ import subprocess
 import shutil
 from pathlib import Path
 
-import imageio_ffmpeg
+try:
+    import imageio_ffmpeg
+except ImportError:
+    imageio_ffmpeg = None
 
 from .config import PipelineConfig
 
@@ -20,6 +23,8 @@ def _get_ffmpeg() -> str:
     sys_ffmpeg = shutil.which("ffmpeg")
     if sys_ffmpeg:
         return sys_ffmpeg
+    if imageio_ffmpeg is None:
+        raise FileNotFoundError("ffmpeg is not installed and imageio-ffmpeg is unavailable")
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
