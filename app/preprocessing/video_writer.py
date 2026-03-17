@@ -13,10 +13,10 @@ Video writing:
 """
 
 import subprocess
+from pathlib import Path
 
 import cv2
 import numpy as np
-from pathlib import Path
 
 from .config import PipelineConfig
 from .video_normalizer import _get_ffmpeg
@@ -50,7 +50,7 @@ def write_video(
     output_path: Path,
     fps: int,
     cfg: PipelineConfig,
-) -> bool:
+) -> tuple[bool, str | None]:
     """
     Encode a list of RGB uint8 frames to an H.264 .mp4 file via ffmpeg stdin.
 
@@ -63,10 +63,10 @@ def write_video(
         cfg:          PipelineConfig (crf_quality, ffmpeg_preset).
 
     Returns:
-        True on success, False on any error.
+        Tuple of (success, error_message).
     """
     if not frames:
-        return False
+        return False, "No frames provided for video encoding."
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     h, w = frames[0].shape[:2]
@@ -75,6 +75,10 @@ def write_video(
     cmd = [
         ffmpeg,
         "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
         "-f",
         "rawvideo",
         "-vcodec",
@@ -99,16 +103,78 @@ def write_video(
         str(output_path),
     ]
 
+    proc: subprocess.Popen | None = None
     try:
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        if proc.stdin is None:
+            return False, "ffmpeg stdin pipe was not created."
+
         for frame_rgb in frames:
             proc.stdin.write(frame_rgb.tobytes())
+
         proc.stdin.close()
+        proc.stdin = None
         proc.wait(timeout=120)
-        return proc.returncode == 0
+
+        stderr_text = ""
+        if proc.stderr is not None:
+            stderr_text = proc.stderr.read().decode("utf-8", errors="replace").strip()
+
+        if proc.returncode != 0:
+            if stderr_text:
+                return False, stderr_text
+            return False, f"ffmpeg exited with code {proc.returncode}."
+
+        if not output_path.exists():
+            return (
+                False,
+                f"ffmpeg exited successfully but did not create {output_path}.",
+            )
+
+        if output_path.stat().st_size <= 0:
+            return False, f"ffmpeg created an empty output file at {output_path}."
+
+        return True, None
+    except BrokenPipeError:
+        stderr_text = _read_stderr(proc)
+        if stderr_text:
+            return False, stderr_text
+        return False, "ffmpeg closed stdin before all frames were written."
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        stderr_text = _read_stderr(proc)
+        if stderr_text:
+            return False, f"ffmpeg timed out while finishing output: {stderr_text}"
+        return False, "ffmpeg timed out while finishing output."
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        if proc is not None and proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        if proc is not None and proc.stderr is not None:
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
+
+
+def _read_stderr(proc: subprocess.Popen | None) -> str:
+    if proc is None or proc.stderr is None:
+        return ""
+    try:
+        return proc.stderr.read().decode("utf-8", errors="replace").strip()
     except Exception:
-        return False
+        return ""

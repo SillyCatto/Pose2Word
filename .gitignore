@@ -21,5 +21,6 @@ dataset/
 asl_keyframe_landmark_extractor/
 .models/
 output/
+outputs/
 preprocessed/
 preprocessed_mini/

@@ -207,9 +207,11 @@ class PreprocessingPipeline:
         out_dir = self.cfg.output_dir / label
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = out_dir / f"{stem}.mp4"
-        success = write_video(frames, output_path, self.cfg.target_fps, self.cfg)
+        success, write_error = write_video(
+            frames, output_path, self.cfg.target_fps, self.cfg
+        )
         if not success:
-            raise RuntimeError(f"write_video() failed for {output_path}")
+            raise RuntimeError(write_error or f"write_video() failed for {output_path}")
         log.debug("Step 8 — written to %s", output_path)
 
         # Step 9: update global metadata.json
