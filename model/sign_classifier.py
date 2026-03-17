@@ -12,13 +12,12 @@ from einops import rearrange
 
 
 class LSTMSignClassifier(nn.Module):
-    """LSTM-based sign language classifier combining flow and landmark features."""
+    """LSTM-based sign language classifier using only landmark features."""
     
     def __init__(
         self,
         num_classes: int = 15,
         landmark_dim: int = 258,
-        flow_dim: int = 32,
         hidden_dim: int = 256,
         num_layers: int = 2,
         dropout: float = 0.3,
@@ -30,7 +29,6 @@ class LSTMSignClassifier(nn.Module):
         Args:
             num_classes: Number of sign language classes
             landmark_dim: Dimension of landmark features (258 for MediaPipe)
-            flow_dim: Dimension of optical flow features
             hidden_dim: Hidden dimension for LSTM
             num_layers: Number of LSTM layers
             dropout: Dropout rate
@@ -40,7 +38,6 @@ class LSTMSignClassifier(nn.Module):
         
         self.num_classes = num_classes
         self.landmark_dim = landmark_dim
-        self.flow_dim = flow_dim
         self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
         
@@ -54,20 +51,9 @@ class LSTMSignClassifier(nn.Module):
             bidirectional=bidirectional
         )
         
-        # Flow encoder (LSTM for temporal modeling)
-        self.flow_lstm = nn.LSTM(
-            input_size=flow_dim,
-            hidden_size=hidden_dim // 2,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
-            bidirectional=bidirectional
-        )
-        
         # Calculate final feature dimension
         lstm_output_dim = hidden_dim * (2 if bidirectional else 1)
-        flow_output_dim = (hidden_dim // 2) * (2 if bidirectional else 1)
-        combined_dim = lstm_output_dim + flow_output_dim
+        combined_dim = lstm_output_dim
         
         # Fusion and classification layers
         self.fusion = nn.Sequential(
@@ -81,13 +67,12 @@ class LSTMSignClassifier(nn.Module):
         
         self.classifier = nn.Linear(hidden_dim // 2, num_classes)
     
-    def forward(self, landmarks: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
+    def forward(self, landmarks: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
         
         Args:
             landmarks: (batch, num_frames, 258) landmark features
-            flow: (batch, num_frames-1, flow_dim) flow features
             
         Returns:
             logits: (batch, num_classes)
@@ -102,16 +87,8 @@ class LSTMSignClassifier(nn.Module):
         else:
             landmark_features = landmark_h[-1]
         
-        # Encode flow
-        flow_out, (flow_h, _) = self.flow_lstm(flow)
-        
-        if self.bidirectional:
-            flow_features = torch.cat([flow_h[-2], flow_h[-1]], dim=1)
-        else:
-            flow_features = flow_h[-1]
-        
-        # Combine features
-        combined = torch.cat([landmark_features, flow_features], dim=1)
+        # Use landmark features directly instead of combining
+        combined = landmark_features
         
         # Fusion and classification
         fused = self.fusion(combined)
@@ -127,7 +104,6 @@ class TransformerSignClassifier(nn.Module):
         self,
         num_classes: int = 15,
         landmark_dim: int = 258,
-        flow_dim: int = 32,
         d_model: int = 256,
         nhead: int = 8,
         num_layers: int = 4,
@@ -140,7 +116,6 @@ class TransformerSignClassifier(nn.Module):
         Args:
             num_classes: Number of sign language classes
             landmark_dim: Dimension of landmark features
-            flow_dim: Dimension of optical flow features
             d_model: Transformer model dimension
             nhead: Number of attention heads
             num_layers: Number of transformer layers
@@ -153,7 +128,6 @@ class TransformerSignClassifier(nn.Module):
         
         # Input projections
         self.landmark_projection = nn.Linear(landmark_dim, d_model)
-        self.flow_projection = nn.Linear(flow_dim, d_model)
         
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model, dropout)
@@ -179,32 +153,21 @@ class TransformerSignClassifier(nn.Module):
             nn.Linear(d_model // 2, num_classes)
         )
     
-    def forward(self, landmarks: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
+    def forward(self, landmarks: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
         
         Args:
             landmarks: (batch, num_frames, 258) landmark features
-            flow: (batch, num_frames-1, flow_dim) flow features
             
         Returns:
             logits: (batch, num_classes)
         """
         # Project inputs to d_model
         landmark_embedded = self.landmark_projection(landmarks)
-        flow_embedded = self.flow_projection(flow)
-        
-        # Pad flow to match landmark sequence length
-        # Add a zero frame at the end to align with landmarks
-        batch_size = flow_embedded.shape[0]
-        zero_pad = torch.zeros(batch_size, 1, self.d_model, device=flow.device)
-        flow_embedded = torch.cat([flow_embedded, zero_pad], dim=1)
-        
-        # Combine landmark and flow features
-        combined = landmark_embedded + flow_embedded  # Element-wise addition
         
         # Add positional encoding
-        combined = self.pos_encoder(combined)
+        combined = self.pos_encoder(landmark_embedded)
         
         # Transformer encoding
         encoded = self.transformer_encoder(combined)
@@ -248,7 +211,6 @@ class HybridSignClassifier(nn.Module):
         self,
         num_classes: int = 15,
         landmark_dim: int = 258,
-        flow_dim: int = 32,
         hidden_dim: int = 256,
         num_lstm_layers: int = 2,
         num_attention_heads: int = 4,
@@ -260,7 +222,6 @@ class HybridSignClassifier(nn.Module):
         Args:
             num_classes: Number of sign language classes
             landmark_dim: Dimension of landmark features
-            flow_dim: Dimension of optical flow features
             hidden_dim: Hidden dimension
             num_lstm_layers: Number of LSTM layers
             num_attention_heads: Number of attention heads
@@ -274,14 +235,9 @@ class HybridSignClassifier(nn.Module):
             batch_first=True, bidirectional=True, dropout=dropout
         )
         
-        self.flow_encoder = nn.LSTM(
-            flow_dim, hidden_dim // 2, num_lstm_layers,
-            batch_first=True, bidirectional=True, dropout=dropout
-        )
-        
         # Self-attention
         self.attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim * 2 + hidden_dim,
+            embed_dim=hidden_dim * 2,
             num_heads=num_attention_heads,
             dropout=dropout,
             batch_first=True
@@ -289,34 +245,26 @@ class HybridSignClassifier(nn.Module):
         
         # Classifier
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2 + hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes)
         )
     
-    def forward(self, landmarks: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
+    def forward(self, landmarks: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
         
         Args:
             landmarks: (batch, num_frames, 258)
-            flow: (batch, num_frames-1, flow_dim)
             
         Returns:
             logits: (batch, num_classes)
         """
         # Encode features
         landmark_out, _ = self.landmark_encoder(landmarks)
-        flow_out, _ = self.flow_encoder(flow)
         
-        # Pad flow to match landmark length
-        batch_size = flow_out.shape[0]
-        zero_pad = torch.zeros(batch_size, 1, flow_out.shape[2], device=flow.device)
-        flow_out = torch.cat([flow_out, zero_pad], dim=1)
-        
-        # Concatenate features
-        combined = torch.cat([landmark_out, flow_out], dim=-1)
+        combined = landmark_out
         
         # Apply self-attention
         attended, _ = self.attention(combined, combined, combined)
@@ -390,21 +338,20 @@ if __name__ == "__main__":
     num_classes = 15
     
     landmarks = torch.randn(batch_size, num_frames, landmark_dim)
-    flow = torch.randn(batch_size, num_frames - 1, flow_dim)
     
     print("\nTesting LSTM model...")
     lstm_model = create_model("lstm", num_classes=num_classes)
-    lstm_out = lstm_model(landmarks, flow)
+    lstm_out = lstm_model(landmarks)
     print(f"Output shape: {lstm_out.shape}")
     
     print("\nTesting Transformer model...")
     transformer_model = create_model("transformer", num_classes=num_classes)
-    transformer_out = transformer_model(landmarks, flow)
+    transformer_out = transformer_model(landmarks)
     print(f"Output shape: {transformer_out.shape}")
     
     print("\nTesting Hybrid model...")
     hybrid_model = create_model("hybrid", num_classes=num_classes)
-    hybrid_out = hybrid_model(landmarks, flow)
+    hybrid_out = hybrid_model(landmarks)
     print(f"Output shape: {hybrid_out.shape}")
     
     print("\n" + "=" * 60)
