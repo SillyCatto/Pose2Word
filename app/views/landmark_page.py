@@ -1,7 +1,7 @@
 """
 Landmark Extractor Page
 
-Streamlit UI for the MediaPipe Holistic → RQ landmark extraction pipeline
+Streamlit UI for the MediaPipe → RQ landmark extraction pipeline
 (ported from asl_landmark_extractor CLI tool).
 
 Supports:
@@ -29,6 +29,7 @@ from ._folder_browser import folder_input_with_browse
 # Session State
 # ─────────────────────────────────────────────
 
+
 def _init_state():
     defaults = {
         "lm_result": None,
@@ -47,6 +48,7 @@ def _init_state():
 # Parameter Controls
 # ─────────────────────────────────────────────
 
+
 def _render_parameters() -> LandmarkConfig:
     """Render pipeline parameter controls and return a LandmarkConfig."""
 
@@ -55,8 +57,12 @@ def _render_parameters() -> LandmarkConfig:
 
         with col1:
             target_len = st.number_input(
-                "Target sequence length", min_value=5, max_value=100,
-                value=15, step=1, key="lm_target_len",
+                "Target sequence length",
+                min_value=5,
+                max_value=100,
+                value=15,
+                step=1,
+                key="lm_target_len",
                 help="Pad or truncate to this fixed length.",
             )
             mp_complexity = st.selectbox(
@@ -65,14 +71,20 @@ def _render_parameters() -> LandmarkConfig:
                 index=1,
                 key="lm_mp",
                 format_func=lambda x: {
-                    0: "0 — Fast", 1: "1 — Balanced", 2: "2 — Accurate"
+                    0: "0 — Fast",
+                    1: "1 — Balanced",
+                    2: "2 — Accurate",
                 }[x],
             )
 
         with col2:
             scale_factor = st.number_input(
-                "Scale factor", min_value=1.0, max_value=1000.0,
-                value=100.0, step=10.0, key="lm_scale",
+                "Scale factor",
+                min_value=1.0,
+                max_value=1000.0,
+                value=100.0,
+                step=10.0,
+                key="lm_scale",
                 help="Post-RQ feature scaling (default ×100).",
             )
 
@@ -92,10 +104,13 @@ def _render_parameters() -> LandmarkConfig:
 # Single Directory Mode
 # ─────────────────────────────────────────────
 
+
 def _render_single_mode(config: LandmarkConfig):
     """Select frames folder → extract landmarks → preview → save .npy."""
 
-    st.markdown("Select a folder containing extracted keyframe images (`frame_0.png`, `frame_1.png`, …)")
+    st.markdown(
+        "Select a folder containing extracted keyframe images (`frame_0.png`, `frame_1.png`, …)"
+    )
 
     folder_input_with_browse(
         "Keyframes folder path",
@@ -164,8 +179,12 @@ def _render_results(result: LandmarkResult):
     # Detection breakdown
     with st.expander("🔍 Detection Breakdown"):
         dc1, dc2, dc3 = st.columns(3)
-        dc1.metric("Left Hand", f"{result.hands_detected_left}/{result.original_frame_count}")
-        dc2.metric("Right Hand", f"{result.hands_detected_right}/{result.original_frame_count}")
+        dc1.metric(
+            "Left Hand", f"{result.hands_detected_left}/{result.original_frame_count}"
+        )
+        dc2.metric(
+            "Right Hand", f"{result.hands_detected_right}/{result.original_frame_count}"
+        )
         dc3.metric("Face", f"{result.face_detected}/{result.original_frame_count}")
 
     # Value range
@@ -206,6 +225,7 @@ def _render_save_section(result: LandmarkResult):
 # Batch Processing Mode
 # ─────────────────────────────────────────────
 
+
 def _render_batch_mode(config: LandmarkConfig):
     """Process all keyframe directories in a dataset."""
 
@@ -228,7 +248,7 @@ def _render_batch_mode(config: LandmarkConfig):
         dialog_title="Select Output Folder",
     )
 
-    root_dir   = st.session_state.get("lm_batch_input", "")
+    root_dir = st.session_state.get("lm_batch_input", "")
     output_dir = st.session_state.get("lm_batch_output", "") or "./output/landmarks"
 
     if not root_dir:
@@ -320,6 +340,7 @@ def _render_batch_mode(config: LandmarkConfig):
 # ─────────────────────────────────────────────
 # Main Render
 # ─────────────────────────────────────────────
+
 
 def render():
     """Render the landmark extractor page."""

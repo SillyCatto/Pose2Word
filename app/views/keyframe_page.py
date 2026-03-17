@@ -1,7 +1,7 @@
 """
 Keyframe Extractor Page
 
-Streamlit UI for the Farneback + MediaPipe Holistic hybrid keyframe
+Streamlit UI for the Farneback + MediaPipe hybrid keyframe
 extraction pipeline (ported from asl_keyframe_extractor CLI tool).
 
 Supports:
@@ -31,6 +31,7 @@ from ._folder_browser import folder_input_with_browse
 # Session State
 # ─────────────────────────────────────────────
 
+
 def _init_state():
     defaults = {
         "kf_result": None,
@@ -49,6 +50,7 @@ def _init_state():
 # Parameter Controls
 # ─────────────────────────────────────────────
 
+
 def _render_parameters() -> PipelineConfig:
     """Render pipeline parameter controls and return a PipelineConfig."""
 
@@ -57,23 +59,39 @@ def _render_parameters() -> PipelineConfig:
 
         with col1:
             min_kf = st.number_input(
-                "Min keyframes", min_value=2, max_value=50,
-                value=8, step=1, key="kf_min",
+                "Min keyframes",
+                min_value=2,
+                max_value=50,
+                value=8,
+                step=1,
+                key="kf_min",
             )
             max_kf = st.number_input(
-                "Max keyframes", min_value=2, max_value=50,
-                value=15, step=1, key="kf_max",
+                "Max keyframes",
+                min_value=2,
+                max_value=50,
+                value=15,
+                step=1,
+                key="kf_max",
             )
 
         with col2:
             smooth_sigma = st.number_input(
-                "Smooth sigma", min_value=0.5, max_value=5.0,
-                value=2.0, step=0.1, key="kf_sigma",
+                "Smooth sigma",
+                min_value=0.5,
+                max_value=5.0,
+                value=2.0,
+                step=0.1,
+                key="kf_sigma",
                 help="Gaussian smoothing on motion signal. Lower = sharper peaks.",
             )
             hold_thresh = st.number_input(
-                "Hold threshold", min_value=0.01, max_value=0.5,
-                value=0.12, step=0.01, key="kf_hold",
+                "Hold threshold",
+                min_value=0.01,
+                max_value=0.5,
+                value=0.12,
+                step=0.01,
+                key="kf_hold",
                 help="Sandwiched hold sensitivity. Lower = catches subtler holds.",
             )
 
@@ -83,7 +101,11 @@ def _render_parameters() -> PipelineConfig:
                 options=[0, 1, 2],
                 index=1,
                 key="kf_mp",
-                format_func=lambda x: {0: "0 — Fast", 1: "1 — Balanced", 2: "2 — Accurate"}[x],
+                format_func=lambda x: {
+                    0: "0 — Fast",
+                    1: "1 — Balanced",
+                    2: "2 — Accurate",
+                }[x],
             )
 
     return PipelineConfig(
@@ -98,6 +120,7 @@ def _render_parameters() -> PipelineConfig:
 # ─────────────────────────────────────────────
 # Single Video Mode
 # ─────────────────────────────────────────────
+
 
 def _render_single_mode(config: PipelineConfig):
     """Upload a video → extract keyframes → preview → save."""
@@ -171,13 +194,15 @@ def _render_results(result: PipelineResult):
     with st.expander("📋 Keyframe Details", expanded=True):
         rows = []
         for rank, idx in enumerate(result.keyframe_indices):
-            rows.append({
-                "#": rank + 1,
-                "Frame": idx,
-                "Time (s)": result.keyframe_times[rank],
-                "Transition": round(float(result.fused_transition[idx]), 3),
-                "Hold": round(float(result.fused_hold[idx]), 3),
-            })
+            rows.append(
+                {
+                    "#": rank + 1,
+                    "Frame": idx,
+                    "Time (s)": result.keyframe_times[rank],
+                    "Transition": round(float(result.fused_transition[idx]), 3),
+                    "Hold": round(float(result.fused_hold[idx]), 3),
+                }
+            )
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
     # Frame preview grid
@@ -188,7 +213,7 @@ def _render_results(result: PipelineResult):
         with cols[i % 5]:
             st.image(
                 rgb,
-                caption=f"#{i+1}  Frame {result.keyframe_indices[i]}  ({result.keyframe_times[i]}s)",
+                caption=f"#{i + 1}  Frame {result.keyframe_indices[i]}  ({result.keyframe_times[i]}s)",
                 use_container_width=True,
             )
 
@@ -216,21 +241,18 @@ def _render_save_section(result: PipelineResult):
             list(range(len(result.keyframe_images))),
             video_dir,
         )
-        st.success(
-            f"✅ Saved {len(paths)} keyframe images to `{video_dir}`"
-        )
+        st.success(f"✅ Saved {len(paths)} keyframe images to `{video_dir}`")
 
 
 # ─────────────────────────────────────────────
 # Batch Processing Mode
 # ─────────────────────────────────────────────
 
+
 def _render_batch_mode(config: PipelineConfig):
     """Process all videos in a dataset folder."""
 
-    st.markdown(
-        "**Expected folder structure:**  `dataset_folder / label / video.mp4`"
-    )
+    st.markdown("**Expected folder structure:**  `dataset_folder / label / video.mp4`")
 
     folder_input_with_browse(
         "Dataset folder path",
@@ -247,10 +269,12 @@ def _render_batch_mode(config: PipelineConfig):
     )
 
     dataset_dir = st.session_state.get("kf_batch_input", "")
-    output_dir  = st.session_state.get("kf_batch_output", "") or "./output/keyframes"
+    output_dir = st.session_state.get("kf_batch_output", "") or "./output/keyframes"
 
     if not dataset_dir:
-        st.info("Paste or browse to the dataset folder containing label subdirectories.")
+        st.info(
+            "Paste or browse to the dataset folder containing label subdirectories."
+        )
         return
 
     # Show video count preview
@@ -313,7 +337,9 @@ def _render_batch_mode(config: PipelineConfig):
                 }
 
             results.append(entry)
-            log_lines.append(f"{entry['Status']}  {label}/{video_stem}  →  {entry['Keyframes']} keyframes")
+            log_lines.append(
+                f"{entry['Status']}  {label}/{video_stem}  →  {entry['Keyframes']} keyframes"
+            )
             log_area.text("\n".join(log_lines[-15:]))  # show last 15 lines
 
         progress.progress(1.0)
@@ -323,7 +349,9 @@ def _render_batch_mode(config: PipelineConfig):
         st.session_state["kf_batch_results"] = results
 
         success = sum(1 for r in results if r["Status"] == "✓")
-        st.success(f"✅ Batch complete: **{success}/{len(results)}** videos processed successfully")
+        st.success(
+            f"✅ Batch complete: **{success}/{len(results)}** videos processed successfully"
+        )
 
     # Display batch results
     if st.session_state.get("kf_batch_results"):
@@ -340,13 +368,14 @@ def _render_batch_mode(config: PipelineConfig):
 # Main Render
 # ─────────────────────────────────────────────
 
+
 def render():
     """Render the keyframe extractor page."""
     _init_state()
 
     st.caption(
         "Extract keyframes from sign language videos using the "
-        "Farneback + MediaPipe Holistic hybrid pipeline."
+        "Farneback + MediaPipe hybrid pipeline."
     )
 
     config = _render_parameters()

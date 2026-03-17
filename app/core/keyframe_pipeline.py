@@ -19,7 +19,7 @@ Keyframe selection detects:
 
 import os
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -27,6 +27,13 @@ import cv2
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
+
+from app.core.mediapipe_tasks import (
+    HandVideoLandmarker,
+    landmarks_bbox,
+    landmarks_to_vector,
+    merge_bboxes,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -37,6 +44,7 @@ ProgressCallback = Optional[Callable[[float, str], None]]
 # ─────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────
+
 
 @dataclass
 class PipelineConfig:
@@ -50,7 +58,7 @@ class PipelineConfig:
     weight_flow_magnitude: float = 0.30
     weight_flow_direction: float = 0.15
     weight_wrist_velocity: float = 0.25
-    weight_handshape:      float = 0.30
+    weight_handshape: float = 0.30
 
     # Smoothing sigma applied to the transition signal.
     # Hold signal uses smooth_sigma * 0.5 to preserve short holds.
@@ -76,20 +84,22 @@ class PipelineConfig:
 @dataclass
 class PipelineResult:
     """Structured result from a single keyframe extraction run."""
+
     keyframe_indices: list[int]
-    keyframe_times:   list[float]  # seconds
-    keyframe_images:  list[np.ndarray]  # BGR frames
-    fps:              float
-    total_frames:     int
+    keyframe_times: list[float]  # seconds
+    keyframe_images: list[np.ndarray]  # BGR frames
+    fps: float
+    total_frames: int
     fused_transition: np.ndarray
-    fused_hold:       np.ndarray
-    hands_detected:   int          # frames where at least one hand was found
-    video_stem:       str = ""
+    fused_hold: np.ndarray
+    hands_detected: int  # frames where at least one hand was found
+    video_stem: str = ""
 
 
 # ─────────────────────────────────────────────
 # Video I/O
 # ─────────────────────────────────────────────
+
 
 def load_video(video_path: str) -> tuple[list[np.ndarray], float]:
     """
@@ -124,6 +134,7 @@ def load_video(video_path: str) -> tuple[list[np.ndarray], float]:
 # Signal 1 & 4 — Farneback Optical Flow
 # ─────────────────────────────────────────────
 
+
 class FlowSignalExtractor:
     """
     CPU-friendly dense optical flow via OpenCV Farneback.
@@ -145,11 +156,13 @@ class FlowSignalExtractor:
             return np.ones((H, W), dtype=bool)
 
         pad = self.config.hand_bbox_padding
-        x0 = max(0.0, bbox[0] - pad);  y0 = max(0.0, bbox[1] - pad)
-        x1 = min(1.0, bbox[2] + pad);  y1 = min(1.0, bbox[3] + pad)
+        x0 = max(0.0, bbox[0] - pad)
+        y0 = max(0.0, bbox[1] - pad)
+        x1 = min(1.0, bbox[2] + pad)
+        y1 = min(1.0, bbox[3] + pad)
 
         mask = np.zeros((H, W), dtype=bool)
-        mask[int(y0 * H):int(y1 * H), int(x0 * W):int(x1 * W)] = True
+        mask[int(y0 * H) : int(y1 * H), int(x0 * W) : int(x1 * W)] = True
         return mask
 
     def extract(
@@ -167,7 +180,9 @@ class FlowSignalExtractor:
             g2 = self._to_gray(frames[i])
 
             flow = cv2.calcOpticalFlowFarneback(
-                g1, g2, None,
+                g1,
+                g2,
+                None,
                 pyr_scale=0.5,
                 levels=3,
                 winsize=15,
@@ -182,7 +197,7 @@ class FlowSignalExtractor:
             mask = self._hand_mask(frames[i].shape, bbox)
 
             # Signal 1 — magnitude
-            mag = np.sqrt(u ** 2 + v ** 2)
+            mag = np.sqrt(u**2 + v**2)
             flow_magnitude[i] = mag[mask].mean() if mask.any() else mag.mean()
 
             # Signal 4 — direction reversal
@@ -204,9 +219,10 @@ class FlowSignalExtractor:
 # Signal 2 & 3 — MediaPipe Landmark Signals
 # ─────────────────────────────────────────────
 
+
 class LandmarkSignalExtractor:
     """
-    Runs MediaPipe Holistic on every frame and extracts:
+    Runs MediaPipe Hand Landmarker on every frame and extracts:
         wrist_velocity  : L2 displacement of wrist landmarks between frames
         handshape_score : L2 displacement of finger-joint landmarks
         hand_bboxes     : normalized (x0, y0, x1, y1) per frame (or None)
@@ -217,56 +233,29 @@ class LandmarkSignalExtractor:
 
     def __init__(self, config: PipelineConfig):
         self.config = config
-        # Lazy import to avoid top-level mediapipe crash if not installed
-        from mediapipe.python.solutions.holistic import Holistic as MpHolistic
-        self.holistic = MpHolistic(
-            static_image_mode=False,
-            model_complexity=config.mediapipe_complexity,
-            smooth_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
-
-    def _hand_to_vec(self, hand_lms) -> np.ndarray:
-        if hand_lms is None:
-            return np.zeros(63)
-        return np.array(
-            [[lm.x, lm.y, lm.z] for lm in hand_lms.landmark]
-        ).flatten()
-
-    def _hand_bbox(self, hand_lms) -> Optional[tuple]:
-        if hand_lms is None:
-            return None
-        xs = [lm.x for lm in hand_lms.landmark]
-        ys = [lm.y for lm in hand_lms.landmark]
-        return (min(xs), min(ys), max(xs), max(ys))
-
-    def _merge_bboxes(self, b1, b2) -> Optional[tuple]:
-        boxes = [b for b in (b1, b2) if b is not None]
-        if not boxes:
-            return None
-        xs = [b[0] for b in boxes] + [b[2] for b in boxes]
-        ys = [b[1] for b in boxes] + [b[3] for b in boxes]
-        return (min(xs), min(ys), max(xs), max(ys))
+        self.hand_landmarker = HandVideoLandmarker()
 
     def extract(
-        self, frames: list[np.ndarray]
+        self,
+        frames: list[np.ndarray],
+        fps: float,
     ) -> tuple[np.ndarray, np.ndarray, list, np.ndarray]:
         N = len(frames)
         landmarks_seq = np.zeros((N, 126))
         hand_bboxes: list[Optional[tuple]] = []
+        fps = fps if fps > 0 else 30.0
 
         for i, frame in enumerate(frames):
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = self.holistic.process(rgb)
+            timestamp_ms = int(round((i * 1000.0) / fps))
+            res = self.hand_landmarker.detect(frame, timestamp_ms)
 
-            lh = self._hand_to_vec(res.left_hand_landmarks)
-            rh = self._hand_to_vec(res.right_hand_landmarks)
+            lh = landmarks_to_vector(res.left_hand_landmarks, expected_count=21)
+            rh = landmarks_to_vector(res.right_hand_landmarks, expected_count=21)
             landmarks_seq[i] = np.concatenate([lh, rh])
 
-            bbox = self._merge_bboxes(
-                self._hand_bbox(res.left_hand_landmarks),
-                self._hand_bbox(res.right_hand_landmarks),
+            bbox = merge_bboxes(
+                landmarks_bbox(res.left_hand_landmarks),
+                landmarks_bbox(res.right_hand_landmarks),
             )
             hand_bboxes.append(bbox)
 
@@ -288,12 +277,13 @@ class LandmarkSignalExtractor:
         return wrist_velocity, handshape_score, hand_bboxes, landmarks_seq
 
     def close(self):
-        self.holistic.close()
+        self.hand_landmarker.close()
 
 
 # ─────────────────────────────────────────────
 # Signal Utilities
 # ─────────────────────────────────────────────
+
 
 def normalize_signal(signal: np.ndarray) -> np.ndarray:
     mn, mx = signal.min(), signal.max()
@@ -308,12 +298,13 @@ def smooth_signal(signal: np.ndarray, sigma: float) -> np.ndarray:
 # Signal Fusion
 # ─────────────────────────────────────────────
 
+
 def fuse_signals(
-    flow_mag:  np.ndarray,
-    flow_dir:  np.ndarray,
+    flow_mag: np.ndarray,
+    flow_dir: np.ndarray,
     wrist_vel: np.ndarray,
     handshape: np.ndarray,
-    config:    PipelineConfig,
+    config: PipelineConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns (fused_transition, fused_hold).
@@ -323,23 +314,23 @@ def fuse_signals(
 
     Hold signal uses tighter smoothing (0.5×) to preserve short holds.
     """
-    fm = smooth_signal(normalize_signal(flow_mag),  config.smooth_sigma)
-    fd = smooth_signal(normalize_signal(flow_dir),  config.smooth_sigma)
+    fm = smooth_signal(normalize_signal(flow_mag), config.smooth_sigma)
+    fd = smooth_signal(normalize_signal(flow_dir), config.smooth_sigma)
     wv = smooth_signal(normalize_signal(wrist_vel), config.smooth_sigma)
     hs = smooth_signal(normalize_signal(handshape), config.smooth_sigma)
 
     w = config
     fused_transition = (
-        w.weight_flow_magnitude * fm +
-        w.weight_flow_direction * fd +
-        w.weight_wrist_velocity * wv +
-        w.weight_handshape      * hs
+        w.weight_flow_magnitude * fm
+        + w.weight_flow_direction * fd
+        + w.weight_wrist_velocity * wv
+        + w.weight_handshape * hs
     )
 
     # Tighter sigma for hold signal so short holds aren't smoothed away
     hold_sigma = max(1.0, config.smooth_sigma * 0.5)
-    wv_tight   = smooth_signal(normalize_signal(wrist_vel), hold_sigma)
-    hs_tight   = smooth_signal(normalize_signal(handshape), hold_sigma)
+    wv_tight = smooth_signal(normalize_signal(wrist_vel), hold_sigma)
+    hs_tight = smooth_signal(normalize_signal(handshape), hold_sigma)
     fused_hold = 1.0 - smooth_signal(
         normalize_signal(0.5 * wv_tight + 0.5 * hs_tight), hold_sigma
     )
@@ -351,9 +342,10 @@ def fuse_signals(
 # Sandwiched Hold Detector
 # ─────────────────────────────────────────────
 
+
 def detect_sandwiched_holds(
-    motion_signal:  np.ndarray,
-    min_gap:        int,
+    motion_signal: np.ndarray,
+    min_gap: int,
     drop_threshold: float = 0.12,
 ) -> list[int]:
     """
@@ -371,11 +363,11 @@ def detect_sandwiched_holds(
         if p2 - p1 < 3:
             continue
 
-        segment          = motion_signal[p1: p2 + 1]
+        segment = motion_signal[p1 : p2 + 1]
         local_min_offset = int(np.argmin(segment))
-        local_min_idx    = p1 + local_min_offset
+        local_min_idx = p1 + local_min_offset
 
-        min_val  = motion_signal[local_min_idx]
+        min_val = motion_signal[local_min_idx]
         peak_avg = (motion_signal[p1] + motion_signal[p2]) / 2.0
 
         if peak_avg - min_val >= drop_threshold:
@@ -388,12 +380,13 @@ def detect_sandwiched_holds(
 # Keyframe Selection
 # ─────────────────────────────────────────────
 
+
 def select_keyframes(
     fused_transition: np.ndarray,
-    fused_hold:       np.ndarray,
-    config:           PipelineConfig,
-    wrist_velocity:   Optional[np.ndarray] = None,
-    handshape_score:  Optional[np.ndarray] = None,
+    fused_hold: np.ndarray,
+    config: PipelineConfig,
+    wrist_velocity: Optional[np.ndarray] = None,
+    handshape_score: Optional[np.ndarray] = None,
 ) -> list[int]:
     """
     Select keyframe indices via four complementary strategies:
@@ -403,9 +396,9 @@ def select_keyframes(
         3. Sandwiched hold detection  → short holds between motion bursts
         4. Trim / pad to [min_keyframes, max_keyframes]
     """
-    N       = len(fused_transition)
+    N = len(fused_transition)
     min_gap = max(2, int(N * config.min_gap_fraction))
-    target  = (config.min_keyframes + config.max_keyframes) // 2
+    target = (config.min_keyframes + config.max_keyframes) // 2
 
     selected = {0, N - 1}
 
@@ -428,8 +421,8 @@ def select_keyframes(
     # 3. Sandwiched holds (uses raw unsmoothed signals)
     if wrist_velocity is not None and handshape_score is not None:
         raw_motion = normalize_signal(
-            0.5 * normalize_signal(wrist_velocity) +
-            0.5 * normalize_signal(handshape_score)
+            0.5 * normalize_signal(wrist_velocity)
+            + 0.5 * normalize_signal(handshape_score)
         )
         sandwiched = detect_sandwiched_holds(
             raw_motion,
@@ -445,16 +438,16 @@ def select_keyframes(
     while len(sorted_idx) > config.max_keyframes:
         middle = sorted_idx[1:-1]
         scores = [fused_transition[i] + fused_hold[i] for i in middle]
-        worst  = middle[int(np.argmin(scores))]
+        worst = middle[int(np.argmin(scores))]
         sorted_idx.remove(worst)
 
     # 4b. Pad if below min — insert highest-scoring unselected frame
     while len(sorted_idx) < config.min_keyframes:
-        combined  = fused_transition + fused_hold
+        combined = fused_transition + fused_hold
         remaining = [i for i in range(N) if i not in set(sorted_idx)]
         if not remaining:
             break
-        best       = remaining[int(np.argmax([combined[i] for i in remaining]))]
+        best = remaining[int(np.argmax([combined[i] for i in remaining]))]
         sorted_idx = sorted(sorted_idx + [best])
 
     return sorted_idx
@@ -464,9 +457,10 @@ def select_keyframes(
 # Frame Saving
 # ─────────────────────────────────────────────
 
+
 def save_individual_keyframes(
-    frames:     list[np.ndarray],
-    indices:    list[int],
+    frames: list[np.ndarray],
+    indices: list[int],
     output_dir: str,
 ) -> list[str]:
     """
@@ -485,6 +479,7 @@ def save_individual_keyframes(
 # ─────────────────────────────────────────────
 # Main Pipeline
 # ─────────────────────────────────────────────
+
 
 def run_pipeline(
     video_path: str,
@@ -519,10 +514,11 @@ def run_pipeline(
     N = len(frames)
 
     # Stage 2 — MediaPipe landmark signals
-    _progress(0.10, f"MediaPipe Holistic on {N} frames…")
+    _progress(0.10, f"MediaPipe hand landmarks on {N} frames…")
     lm_extractor = LandmarkSignalExtractor(config)
-    wrist_velocity, handshape_score, hand_bboxes, landmarks_seq = \
-        lm_extractor.extract(frames)
+    wrist_velocity, handshape_score, hand_bboxes, landmarks_seq = lm_extractor.extract(
+        frames, fps
+    )
     lm_extractor.close()
 
     hands_detected = sum(1 for b in hand_bboxes if b is not None)
@@ -535,13 +531,17 @@ def run_pipeline(
     # Stage 4 — Signal fusion + keyframe selection
     _progress(0.85, "Fusing signals and selecting keyframes…")
     fused_transition, fused_hold = fuse_signals(
-        flow_magnitude, flow_direction,
-        wrist_velocity, handshape_score,
+        flow_magnitude,
+        flow_direction,
+        wrist_velocity,
+        handshape_score,
         config,
     )
 
     keyframe_indices = select_keyframes(
-        fused_transition, fused_hold, config,
+        fused_transition,
+        fused_hold,
+        config,
         wrist_velocity=wrist_velocity,
         handshape_score=handshape_score,
     )
@@ -566,6 +566,7 @@ def run_pipeline(
 # ─────────────────────────────────────────────
 # Batch Processing
 # ─────────────────────────────────────────────
+
 
 def discover_videos(
     dataset_dir: str,
@@ -636,20 +637,24 @@ def run_batch(
                 list(range(len(result.keyframe_images))),
                 out_dir,
             )
-            results.append({
-                "label": label,
-                "video_stem": video_stem,
-                "status": "✓",
-                "n_keyframes": len(result.keyframe_indices),
-                "error": None,
-            })
+            results.append(
+                {
+                    "label": label,
+                    "video_stem": video_stem,
+                    "status": "✓",
+                    "n_keyframes": len(result.keyframe_indices),
+                    "error": None,
+                }
+            )
         except Exception as e:
-            results.append({
-                "label": label,
-                "video_stem": video_stem,
-                "status": "✗",
-                "n_keyframes": 0,
-                "error": str(e),
-            })
+            results.append(
+                {
+                    "label": label,
+                    "video_stem": video_stem,
+                    "status": "✗",
+                    "n_keyframes": 0,
+                    "error": str(e),
+                }
+            )
 
     return results

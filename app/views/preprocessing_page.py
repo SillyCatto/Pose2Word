@@ -126,6 +126,27 @@ def _render_config() -> PipelineConfig:
                 help="1.3 = 30% padding around detected body",
                 key=_key("crop_exp"),
             )
+            crop_cushion_px = st.slider(
+                "Safety cushion (px)",
+                0,
+                64,
+                18,
+                1,
+                help="Extra pixel padding on all sides after adaptive margins.",
+                key=_key("crop_cushion_px"),
+            )
+            crop_hand_tip_extension = st.slider(
+                "Hand reach extension",
+                0.0,
+                1.0,
+                0.35,
+                0.05,
+                help=(
+                    "Extends wrist->elbow direction to estimate fingertip reach; "
+                    "helps keep raised fingers above forehead in frame."
+                ),
+                key=_key("crop_hand_tip_extension"),
+            )
 
             st.markdown("**Temporal Trimming (dual signal)**")
             trim_vel = st.slider(
@@ -180,6 +201,8 @@ def _render_config() -> PipelineConfig:
         clahe_clip_limit=clahe_clip,
         output_size=output_size,
         crop_expansion=crop_exp,
+        crop_cushion_px=int(crop_cushion_px),
+        crop_hand_tip_extension=float(crop_hand_tip_extension),
         trim_vel_threshold=trim_vel,
         trim_min_idle_duration=trim_min_idle,
         min_active_frames=trim_min_frames,

@@ -26,8 +26,19 @@ class PipelineConfig:
     clahe_tile_size: tuple = field(default_factory=lambda: (8, 8))
 
     # --- Step 4: Signer Localization ---
-    crop_expansion: float = 1.3  # bbox expansion around detected body
+    crop_expansion: float = 1.3  # final global bbox expansion around detected body
     pose_sample_step: int = 3  # run pose every N frames for bbox stability
+    crop_visibility_threshold: float = 0.3
+    crop_quantile_low: float = 0.02
+    crop_quantile_high: float = 0.98
+    crop_base_margin_side: float = 0.04
+    crop_base_margin_top: float = 0.06
+    crop_base_margin_bottom: float = 0.04
+    crop_motion_margin_scale: float = 0.25
+    crop_top_raise_scale: float = 0.50
+    crop_hand_tip_extension: float = 0.35
+    crop_cushion_px: int = 18
+    crop_min_fraction: float = 0.25
 
     # --- Step 5: Output Resolution ---
     output_size: int = 512  # square output — 512×512, aspect-preserving
