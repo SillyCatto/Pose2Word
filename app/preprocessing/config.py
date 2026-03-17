@@ -2,7 +2,7 @@
 Pipeline configuration — all tunable parameters in one place.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -13,47 +13,38 @@ class PipelineConfig:
     # --- Paths ---
     dataset_dir: Path = Path("dataset/raw_video_data")
     labels_csv: Path = Path("dataset/raw_video_data/labels.csv")
-    output_dir: Path = Path("preprocessed")
-    normalized_video_dir: Path = Path("preprocessed/_normalized_videos")
+    output_dir: Path = Path("outputs/preprocessed")
+    normalized_video_dir: Path = Path("outputs/_normalized_videos")
 
     # --- Step 1: Video Normalization (ffmpeg) ---
-    target_fps: int = 25
+    target_fps: int = 30
     crf_quality: int = 20
     ffmpeg_preset: str = "medium"
 
-    # --- Step 3: Temporal Trimming ---
-    trim_threshold_factor: float = 1.0  # motion threshold = mean + factor * std
-    trim_buffer_frames: int = 2  # frames to keep before/after active segment
-    min_active_frames: int = 10  # minimum frames after trimming
+    # --- Step 3: CLAHE Lighting Normalization ---
+    clahe_clip_limit: float = 2.0
+    clahe_tile_size: tuple = field(default_factory=lambda: (8, 8))
 
     # --- Step 4: Signer Localization ---
-    crop_expansion: float = 1.2  # bbox expansion factor
-    crop_short_side: int = 256  # short side of cropped frames (px)
-    pose_sample_step: int = 5  # run pose detection every N frames
+    crop_expansion: float = 1.3  # bbox expansion around detected body
+    pose_sample_step: int = 3  # run pose every N frames for bbox stability
 
-    # --- Step 5: Denoising ---
-    denoise_h: int = 6  # filter strength (lower = milder)
-    denoise_h_color: int = 6
+    # --- Step 5: Output Resolution ---
+    output_size: int = 512  # square output — 512×512, aspect-preserving
 
-    # --- Step 6: Keypoint Extraction ---
-    keypoint_smooth_window: int = 5  # Savitzky-Golay window (must be odd)
-    keypoint_smooth_order: int = 2  # polynomial order
+    # --- Step 6: Temporal Trimming (dual signal) ---
+    # Signal A: wrist landmark visibility < 0.3  → no hand visible
+    # Signal B: wrist velocity < vel_threshold   → hand stationary
+    # Gate: idle must be sustained >= min_idle_duration seconds to trim
+    trim_vel_threshold: float = 0.008  # normalized velocity (0–1 coord space)
+    trim_min_idle_duration: float = 0.4  # seconds
+    min_active_frames: int = 10  # minimum frames to keep after trimming
 
-    # --- Step 7: Optical Flow (RAFT) ---
-    flow_model: str = "small"  # "small" or "large"
-    flow_batch_size: int = 4
-
-    # --- Step 8: Motion Masks ---
-    mask_threshold_sigma: float = 1.0  # flow threshold = mean + sigma * std
-
-    # --- Step 10: Sequence Length ---
-    target_sequence_length: int = 32
-
-    # --- Device ---
-    device: str = "auto"  # "auto", "cuda", "mps", "cpu"
+    # --- Device (for future GPU-accelerated steps) ---
+    device: str = "auto"
 
     def resolve_device(self) -> str:
-        """Determine the best available device."""
+        """Determine the best available compute device."""
         if self.device != "auto":
             return self.device
         import torch

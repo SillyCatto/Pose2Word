@@ -1,32 +1,24 @@
 """
-Video Preprocessing Page — integrated with the preprocessing pipeline.
+Video Preprocessing Page — integrated with the preprocessing pipeline v2.0.0.
 
 Provides a Streamlit UI for:
   - Configuring all pipeline parameters
   - Processing a single video or the full dataset
   - Viewing progress and quality reports
-  - Previewing preprocessed outputs
+  - Previewing preprocessed .mp4 outputs
 """
 
 import csv
-import json
 import tempfile
 from pathlib import Path
 
-import numpy as np
+import cv2
 import streamlit as st
 
+from app.preprocessing import PreprocessingPipeline
 from app.preprocessing.config import PipelineConfig
-from app.preprocessing.video_normalizer import check_ffmpeg, normalize_video
-from app.preprocessing.frame_extraction import extract_frames, trim_idle_segments
-from app.preprocessing.signer_crop import compute_signer_bbox, crop_and_resize
-from app.preprocessing.denoise import denoise_frames
-from app.preprocessing.keypoint_extraction import extract_keypoints
-from app.preprocessing.optical_flow import FlowExtractor
-from app.preprocessing.motion_mask import generate_masks
-from app.preprocessing.sequence_normalizer import normalize_sequence_length
-from app.preprocessing.storage import save_sample, sample_exists
-from app.preprocessing.quality_checks import check_sample, generate_dataset_report
+from app.preprocessing.quality_checks import generate_dataset_report
+from app.preprocessing.storage import sample_exists
 
 
 # ── Session state keys ───────────────────────────────────────────────────────
@@ -41,11 +33,8 @@ def _init():
     defaults = {
         _key("mode"): "single",
         _key("dataset_dir"): "dataset/raw_video_data",
-        _key("output_dir"): "preprocessed",
-        _key("preview_frames"): None,
-        _key("preview_keypoints"): None,
-        _key("preview_flow_mag"): None,
-        _key("preview_masks"): None,
+        _key("output_dir"): "outputs/preprocessed",
+        _key("preview_video_path"): None,
         _key("preview_metadata"): None,
         _key("batch_results"): None,
     }
@@ -62,17 +51,8 @@ def render():
 
     st.caption(
         "Run the full preprocessing pipeline on WLASL sign language videos — "
-        "normalize, trim, crop, denoise, extract keypoints & optical flow, and cache results."
+        "normalize, CLAHE, crop, temporally trim, and write 512×512 video."
     )
-
-    # --- ffmpeg check ---
-    if not check_ffmpeg():
-        st.error(
-            "**ffmpeg is not available.**  "
-            "Run `uv sync` to install the bundled ffmpeg binary, "
-            "or install ffmpeg manually on your system."
-        )
-        return
 
     # --- Mode selector ---
     mode = st.radio(
@@ -101,11 +81,11 @@ def render():
 def _render_config() -> PipelineConfig:
     """Render pipeline configuration controls and return a PipelineConfig."""
     with st.expander("⚙️ Pipeline Configuration", expanded=False):
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("**Video Normalization**")
-            target_fps = st.number_input("Target FPS", 15, 60, 25, key=_key("fps"))
+            target_fps = st.number_input("Target FPS", 15, 60, 30, key=_key("fps"))
             crf = st.slider(
                 "CRF Quality",
                 18,
@@ -115,23 +95,24 @@ def _render_config() -> PipelineConfig:
                 key=_key("crf"),
             )
 
-            st.markdown("**Temporal Trimming**")
-            trim_factor = st.slider(
-                "Motion threshold factor",
-                0.1,
-                3.0,
-                1.0,
-                0.1,
-                help="mean + factor × std  (higher = stricter, trims more idle frames)",
-                key=_key("trim_factor"),
+            st.markdown("**CLAHE Lighting Normalization**")
+            clahe_clip = st.slider(
+                "CLAHE clip limit",
+                0.5,
+                8.0,
+                2.0,
+                0.5,
+                help="Controls contrast enhancement strength. 2.0 is a sensible default.",
+                key=_key("clahe_clip"),
             )
-            trim_buffer = st.number_input(
-                "Buffer frames",
-                0,
-                30,
-                2,
-                key=_key("trim_buf"),
-                help="Frames to keep before/after first/last active frame",
+
+            st.markdown("**Output Resolution**")
+            output_size = st.selectbox(
+                "Output size (px)",
+                [256, 384, 512],
+                index=2,
+                help="Square output resolution. 512 is recommended.",
+                key=_key("output_size"),
             )
 
         with col2:
@@ -140,40 +121,39 @@ def _render_config() -> PipelineConfig:
                 "Bbox expansion",
                 1.0,
                 2.0,
-                1.2,
+                1.3,
                 0.05,
-                help="1.2 = 20% padding around detected body",
+                help="1.3 = 30% padding around detected body",
                 key=_key("crop_exp"),
             )
-            crop_short = st.selectbox(
-                "Short side (px)",
-                [224, 256, 320, 384],
-                index=1,
-                key=_key("crop_short"),
-            )
 
-            st.markdown("**Denoising**")
-            denoise_h = st.slider(
-                "Denoise strength",
+            st.markdown("**Temporal Trimming (dual signal)**")
+            trim_vel = st.slider(
+                "Wrist velocity threshold",
+                0.001,
+                0.05,
+                0.008,
+                0.001,
+                help="Frames with wrist velocity < threshold are considered idle",
+                key=_key("trim_vel"),
+                format="%.3f",
+            )
+            trim_min_idle = st.slider(
+                "Min idle duration (s)",
+                0.1,
+                1.0,
+                0.4,
+                0.1,
+                help="Idle must last ≥ this many seconds before trimming",
+                key=_key("trim_min_idle"),
+            )
+            trim_min_frames = st.number_input(
+                "Min active frames after trim",
                 0,
-                15,
-                6,
-                help="0 = disabled, 6 = mild, 10+ = aggressive",
-                key=_key("denoise_h"),
-            )
-
-        with col3:
-            st.markdown("**Optical Flow (RAFT)**")
-            flow_model = st.selectbox(
-                "RAFT model", ["small", "large"], key=_key("flow_model")
-            )
-            flow_batch = st.number_input(
-                "Flow batch size", 1, 16, 4, key=_key("flow_batch")
-            )
-
-            st.markdown("**Sequence**")
-            seq_len = st.number_input(
-                "Target sequence length", 8, 128, 32, key=_key("seq_len")
+                30,
+                10,
+                key=_key("trim_min_frames"),
+                help="Reject trim and keep original boundaries if too few frames remain",
             )
 
             st.markdown("**Device**")
@@ -187,7 +167,7 @@ def _render_config() -> PipelineConfig:
             "Dataset directory", "dataset/raw_video_data", key=_key("ds_dir")
         )
         output_dir = st.text_input(
-            "Output directory", "preprocessed", key=_key("out_dir")
+            "Output directory", "outputs/preprocessed", key=_key("out_dir")
         )
 
     cfg = PipelineConfig(
@@ -197,15 +177,12 @@ def _render_config() -> PipelineConfig:
         normalized_video_dir=Path(output_dir) / "_normalized_videos",
         target_fps=target_fps,
         crf_quality=crf,
-        trim_threshold_factor=trim_factor,
-        trim_buffer_frames=trim_buffer,
+        clahe_clip_limit=clahe_clip,
+        output_size=output_size,
         crop_expansion=crop_exp,
-        crop_short_side=crop_short,
-        denoise_h=denoise_h,
-        denoise_h_color=denoise_h,
-        flow_model=flow_model,
-        flow_batch_size=flow_batch,
-        target_sequence_length=seq_len,
+        trim_vel_threshold=trim_vel,
+        trim_min_idle_duration=trim_min_idle,
+        min_active_frames=trim_min_frames,
         device=device,
     )
     return cfg
@@ -272,31 +249,20 @@ def _render_single_video(cfg: PipelineConfig):
     if video_path is None:
         return
 
-    # --- Skip flow toggle ---
-    col_a, col_b = st.columns(2)
-    with col_a:
-        skip_flow = st.checkbox(
-            "Skip optical flow (faster)",
-            value=False,
-            key=_key("skip_flow"),
-        )
-    with col_b:
-        skip_existing = st.checkbox(
-            "Skip if already processed",
-            value=True,
-            key=_key("skip_existing"),
-        )
+    skip_existing = st.checkbox(
+        "Skip if already processed",
+        value=True,
+        key=_key("skip_existing"),
+    )
 
     # --- Process button ---
     if st.button(
         "▶️ Run Preprocessing Pipeline", type="primary", key=_key("run_single")
     ):
-        _run_single_pipeline(
-            cfg, video_path, label, video_name, skip_flow, skip_existing
-        )
+        _run_single_pipeline(cfg, video_path, label, video_name, skip_existing)
 
     # --- Preview section ---
-    if st.session_state[_key("preview_frames")] is not None:
+    if st.session_state[_key("preview_video_path")] is not None:
         _render_preview()
 
 
@@ -305,7 +271,6 @@ def _run_single_pipeline(
     video_path: Path,
     label: str,
     video_name: str,
-    skip_flow: bool,
     skip_existing: bool,
 ):
     """Execute the pipeline with step-by-step status updates."""
@@ -315,112 +280,47 @@ def _run_single_pipeline(
             f"⊘ Already processed: `{label}/{video_name}`. "
             "Uncheck 'Skip if already processed' to reprocess."
         )
-        _load_preview_from_disk(cfg, label, video_name)
+        stem = Path(video_name).stem
+        output_path = cfg.output_dir / label / f"{stem}.mp4"
+        if output_path.exists():
+            st.session_state[_key("preview_video_path")] = output_path
         return
 
+    _TOTAL = 9
     progress = st.progress(0.0, text="Starting pipeline…")
     status = st.empty()
 
+    def step_cb(step: int, total: int, msg: str) -> None:
+        frac = (step - 1) / total
+        progress.progress(frac, text=f"Step {step}/{total} — {msg}")
+        status.info(f"Step {step}/{total} — {msg}")
+
+    pipeline = PreprocessingPipeline(cfg)
+
     try:
-        # Step 1: Normalize
-        status.info("Step 1/8 — Normalizing video (ffmpeg → CFR)…")
-        progress.progress(0.05, text="Normalizing video…")
-        norm_path = cfg.normalized_video_dir / label / video_name
-        if not norm_path.exists():
-            ok = normalize_video(video_path, norm_path, cfg)
-            if not ok:
-                st.error("❌ ffmpeg normalization failed.")
-                return
-
-        # Step 2: Extract frames
-        status.info("Step 2/8 — Extracting frames…")
-        progress.progress(0.15, text="Extracting frames…")
-        frames = extract_frames(norm_path)
-        original_count = len(frames)
-        if original_count == 0:
-            st.error("❌ No frames decoded from video.")
-            return
-
-        # Step 3: Trim
-        status.info("Step 3/8 — Trimming idle segments…")
-        progress.progress(0.20, text="Trimming…")
-        frames, trim_start, trim_end = trim_idle_segments(frames, cfg)
-        trimmed_count = len(frames)
-
-        # Step 4: Crop
-        status.info("Step 4/8 — Localizing signer & cropping…")
-        progress.progress(0.30, text="Signer localization…")
-        bbox = compute_signer_bbox(frames, cfg)
-        frames = crop_and_resize(frames, bbox, cfg.crop_short_side)
-        crop_h, crop_w = frames[0].shape[:2]
-
-        # Step 5: Denoise
-        status.info("Step 5/8 — Denoising frames…")
-        progress.progress(0.40, text="Denoising…")
-        frames = denoise_frames(frames, cfg)
-
-        # Step 6: Keypoints
-        status.info("Step 6/8 — Extracting keypoints (MediaPipe)…")
-        progress.progress(0.50, text="Keypoint extraction…")
-        keypoints, kp_confidence = extract_keypoints(frames, cfg)
-
-        # Step 7: Optical flow
-        flow_vectors = None
-        flow_magnitudes = None
-        if not skip_flow:
-            status.info(f"Step 7/8 — Computing optical flow (RAFT-{cfg.flow_model})…")
-            progress.progress(0.65, text="Optical flow (RAFT)…")
-            flow_ext = FlowExtractor(cfg)
-            flow_vectors, flow_magnitudes = flow_ext.extract(frames)
-        else:
-            progress.progress(0.65, text="Optical flow skipped")
-
-        # Step 8: Masks + normalize + save
-        status.info("Step 8/8 — Generating masks, normalizing, saving…")
-        progress.progress(0.80, text="Masks & saving…")
-        masks = generate_masks(keypoints, flow_magnitudes, crop_h, crop_w, cfg)
-
-        data = normalize_sequence_length(
-            frames, keypoints, flow_vectors, flow_magnitudes, masks, cfg
+        result = pipeline.process_single_video(
+            video_path,
+            label,
+            video_name,
+            skip_existing=False,
+            step_cb=step_cb,
         )
 
-        metadata = {
-            "source_video": video_name,
-            "label": label,
-            "original_frame_count": original_count,
-            "trimmed_frame_count": trimmed_count,
-            "trim_range": [trim_start, trim_end],
-            "crop_bbox": list(bbox),
-            "crop_size": [crop_h, crop_w],
-            "keypoint_confidence_mean": round(kp_confidence, 4),
-            "target_fps": cfg.target_fps,
-            "target_sequence_length": cfg.target_sequence_length,
-            "flow_computed": not skip_flow,
-            "pipeline_version": "1.0.0",
-        }
-        sample_dir = save_sample(cfg.output_dir, label, video_name, data, metadata)
-
-        # Quality check
-        report = check_sample(sample_dir)
         progress.progress(1.0, text="Done!")
 
-        if report.passed:
+        if result.get("success"):
+            stem = Path(video_name).stem
+            output_path = cfg.output_dir / label / f"{stem}.mp4"
+            orig = result.get("original_frame_count", "?")
+            trim = result.get("trimmed_frame_count", "?")
             status.success(
-                f"✅ Preprocessing complete — saved to `{sample_dir}`  "
-                f"({trimmed_count} frames trimmed from {original_count}, "
-                f"keypoint confidence: {kp_confidence:.2f})"
+                f"✅ Saved to `{output_path}`  "
+                f"({trim} frames kept from {orig} original)"
             )
+            st.session_state[_key("preview_video_path")] = output_path
+            st.session_state[_key("preview_metadata")] = result
         else:
-            status.warning(
-                f"⚠️ Saved to `{sample_dir}` with warnings: {', '.join(report.warnings)}"
-            )
-
-        # Store preview
-        st.session_state[_key("preview_frames")] = data["frames"]
-        st.session_state[_key("preview_keypoints")] = data["keypoints"]
-        st.session_state[_key("preview_flow_mag")] = data.get("flow_magnitudes")
-        st.session_state[_key("preview_masks")] = data.get("masks")
-        st.session_state[_key("preview_metadata")] = metadata
+            status.error(f"❌ Pipeline failed: {result.get('error')}")
 
     except Exception as exc:
         progress.progress(1.0, text="Error")
@@ -428,30 +328,22 @@ def _run_single_pipeline(
         st.exception(exc)
 
 
-def _load_preview_from_disk(cfg: PipelineConfig, label: str, video_name: str):
-    """Load previously saved outputs for preview."""
-    stem = Path(video_name).stem
-    sample_dir = cfg.output_dir / label / stem
-
-    frames_p = sample_dir / "frames.npy"
-    kp_p = sample_dir / "keypoints.npy"
-    meta_p = sample_dir / "metadata.json"
-
-    if frames_p.exists():
-        st.session_state[_key("preview_frames")] = np.load(frames_p)
-    if kp_p.exists():
-        st.session_state[_key("preview_keypoints")] = np.load(kp_p)
-
-    flow_mag_p = sample_dir / "flow_magnitudes.npy"
-    if flow_mag_p.exists():
-        st.session_state[_key("preview_flow_mag")] = np.load(flow_mag_p)
-    masks_p = sample_dir / "masks.npy"
-    if masks_p.exists():
-        st.session_state[_key("preview_masks")] = np.load(masks_p)
-
-    if meta_p.exists():
-        with open(meta_p, encoding="utf-8") as f:
-            st.session_state[_key("preview_metadata")] = json.load(f)
+def _sample_frames_from_video(video_path: Path, n: int = 8) -> list:
+    """Read up to n uniformly-spaced frames (RGB) from a video file."""
+    cap = cv2.VideoCapture(str(video_path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        cap.release()
+        return []
+    indices = [int(i * total / n) for i in range(min(n, total))]
+    frames = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if ret:
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    cap.release()
+    return frames
 
 
 def _render_preview():
@@ -461,62 +353,32 @@ def _render_preview():
 
     meta = st.session_state[_key("preview_metadata")]
     if meta:
-        mcols = st.columns(5)
+        mcols = st.columns(4)
         mcols[0].metric("Original Frames", meta.get("original_frame_count", "—"))
         mcols[1].metric("After Trim", meta.get("trimmed_frame_count", "—"))
         crop = meta.get("crop_size", ["—", "—"])
         mcols[2].metric("Crop Size", f"{crop[0]}×{crop[1]}")
-        mcols[3].metric(
-            "KP Confidence", f"{meta.get('keypoint_confidence_mean', 0):.2f}"
-        )
-        mcols[4].metric("Flow Computed", "Yes" if meta.get("flow_computed") else "No")
+        out = meta.get("output_size", ["—", "—"])
+        mcols[3].metric("Output Size", f"{out[0]}×{out[1]}")
 
-    frames = st.session_state[_key("preview_frames")]
-    if frames is not None and len(frames) > 0:
-        tab_frm, tab_flow, tab_mask = st.tabs(["Frames", "Optical Flow", "Masks"])
-
-        with tab_frm:
-            st.markdown("**Cropped & denoised frames** (uniformly sampled):")
-            sample_idx = list(range(0, len(frames), max(1, len(frames) // 8)))[:8]
-            cols = st.columns(len(sample_idx))
-            for i, idx in enumerate(sample_idx):
+    video_path = st.session_state[_key("preview_video_path")]
+    if video_path and Path(video_path).exists():
+        st.markdown("**Sampled frames from preprocessed video:**")
+        sampled = _sample_frames_from_video(video_path, n=8)
+        if sampled:
+            # Get total frame count for captions
+            cap = cv2.VideoCapture(str(video_path))
+            total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            cols = st.columns(len(sampled))
+            for i, frame in enumerate(sampled):
+                frame_idx = int(i * total_f / len(sampled))
                 with cols[i]:
-                        st.image(frames[idx], caption=f"#{idx}", width="stretch")
-
-        with tab_flow:
-            flow_mag = st.session_state[_key("preview_flow_mag")]
-            if flow_mag is not None and len(flow_mag) > 0:
-                st.markdown("**Optical flow magnitude** (brighter = more motion):")
-                sample_idx = list(range(0, len(flow_mag), max(1, len(flow_mag) // 8)))[
-                    :8
-                ]
-                cols = st.columns(len(sample_idx))
-                for i, idx in enumerate(sample_idx):
-                    with cols[i]:
-                        mag = flow_mag[idx]
-                        if mag.max() > 0:
-                            viz = (mag / mag.max() * 255).astype(np.uint8)
-                        else:
-                            viz = np.zeros_like(mag, dtype=np.uint8)
-                        st.image(viz, caption=f"#{idx}", width="stretch")
-            else:
-                st.info("Optical flow was skipped for this sample.")
-
-        with tab_mask:
-            masks = st.session_state[_key("preview_masks")]
-            if masks is not None and len(masks) > 0:
-                st.markdown("**Motion masks** (white = signer region):")
-                sample_idx = list(range(0, len(masks), max(1, len(masks) // 8)))[:8]
-                cols = st.columns(len(sample_idx))
-                for i, idx in enumerate(sample_idx):
-                    with cols[i]:
-                        st.image(masks[idx], caption=f"#{idx}", width="stretch")
-            else:
-                st.info("No masks available.")
+                    st.image(frame, caption=f"#{frame_idx}", use_container_width=True)
 
     if meta:
         with st.expander("📋 Full Metadata"):
-            st.json(meta)
+            st.json({k: v for k, v in meta.items() if k != "success"})
 
 
 # ── Batch mode ───────────────────────────────────────────────────────────────
@@ -543,22 +405,14 @@ def _render_batch(cfg: PipelineConfig):
         for cls, cnt in sorted(label_counts.items()):
             st.text(f"  {cls:15s}  {cnt} videos")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        skip_flow = st.checkbox(
-            "Skip optical flow (much faster)",
-            value=False,
-            key=_key("batch_skip_flow"),
-        )
-    with col_b:
-        skip_existing = st.checkbox(
-            "Skip already processed",
-            value=True,
-            key=_key("batch_skip_existing"),
-        )
+    skip_existing = st.checkbox(
+        "Skip already processed",
+        value=True,
+        key=_key("batch_skip_existing"),
+    )
 
     if st.button("🚀 Start Batch Processing", type="primary", key=_key("run_batch")):
-        _run_batch(cfg, rows, skip_flow, skip_existing)
+        _run_batch(cfg, rows, skip_existing)
 
     results = st.session_state.get(_key("batch_results"))
     if results:
@@ -568,12 +422,9 @@ def _render_batch(cfg: PipelineConfig):
 def _run_batch(
     cfg: PipelineConfig,
     rows: list[dict],
-    skip_flow: bool,
     skip_existing: bool,
 ):
     """Process every video in labels.csv with live progress."""
-    from app.preprocessing.runner import PreprocessingPipeline
-
     pipeline = PreprocessingPipeline(cfg)
     total = len(rows)
 
@@ -594,13 +445,22 @@ def _run_batch(
                 "error": "file not found",
             }
         else:
-            result = pipeline.process_single_video(
+            raw = pipeline.process_single_video(
                 video_path,
                 label,
                 video_name,
                 skip_existing=skip_existing,
-                skip_flow=skip_flow,
             )
+            if raw.get("skipped"):
+                result = {"status": "skipped", "video": video_name}
+            elif raw.get("success"):
+                result = {"status": "ok", "video": video_name, **raw}
+            else:
+                result = {
+                    "status": "error",
+                    "video": video_name,
+                    "error": raw.get("error", "unknown"),
+                }
 
         status_counts[result["status"]] = status_counts.get(result["status"], 0) + 1
         all_results.append(result)
@@ -636,16 +496,6 @@ def _render_batch_results(summary: dict):
             for e in errors:
                 st.text(f"  ✗ {e['video']}: {e.get('error', 'unknown')}")
 
-    warnings = [
-        r
-        for r in summary["results"]
-        if r["status"] == "ok" and r.get("report", {}).get("warnings")
-    ]
-    if warnings:
-        with st.expander(f"⚠️ {len(warnings)} samples with warnings"):
-            for w in warnings:
-                st.text(f"  ⚠ {w['video']}: {', '.join(w['report']['warnings'])}")
-
 
 # ── Quality report mode ──────────────────────────────────────────────────────
 
@@ -667,23 +517,33 @@ def _render_report(cfg: PipelineConfig):
         st.info("Click 'Generate Report' to scan preprocessed data.")
         return
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Samples", report["total_samples"])
-    c2.metric("Passed", report["passed"])
-    c3.metric("Failed", report["failed_count"])
+    # report is List[SampleReport]
+    total = len(report)
+    passed = sum(1 for r in report if r.passed)
+    failed_list = [r for r in report if not r.passed]
 
-    st.markdown("**Per-class counts:**")
-    if report["class_counts"]:
-        ncols = min(5, len(report["class_counts"]))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Samples", total)
+    c2.metric("Passed", passed)
+    c3.metric("Failed", len(failed_list))
+
+    # Per-class counts
+    class_counts: dict[str, int] = {}
+    for r in report:
+        class_counts[r.label] = class_counts.get(r.label, 0) + 1
+
+    if class_counts:
+        st.markdown("**Per-class counts:**")
+        ncols = min(5, len(class_counts))
         cols = st.columns(ncols)
-        for i, (cls, cnt) in enumerate(sorted(report["class_counts"].items())):
+        for i, (cls, cnt) in enumerate(sorted(class_counts.items())):
             cols[i % ncols].metric(cls, cnt)
 
-    if report["failed_samples"]:
+    if failed_list:
         st.markdown("---")
-        st.markdown(f"**⚠️ {len(report['failed_samples'])} failed samples:**")
-        for f in report["failed_samples"]:
-            st.text(f"  ✗ {f['label']}/{f['video']}: {'; '.join(f['warnings'])}")
+        st.markdown(f"**⚠️ {len(failed_list)} failed samples:**")
+        for r in failed_list:
+            st.text(f"  ✗ {r.label}/{r.video_name}: {'; '.join(r.warnings)}")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

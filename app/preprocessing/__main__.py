@@ -1,157 +1,191 @@
 """
-CLI entry point for running the preprocessing pipeline.
+CLI entry point for the preprocessing pipeline.
 
 Usage:
-    uv run python -m preprocessing                  # process full dataset
-    uv run python -m preprocessing --skip-flow       # skip optical flow (fast)
-    uv run python -m preprocessing --report          # quality report only
-    uv run python -m preprocessing --single who/who_63229.mp4
+    uv run python -m app.preprocessing [OPTIONS]
+
+Examples:
+    # Run entire dataset with default settings
+    uv run python -m app.preprocessing
+
+    # Re-process even if outputs already exist
+    uv run python -m app.preprocessing --no-skip-existing
+
+    # Custom output resolution and directory
+    uv run python -m app.preprocessing --output-size 256 --output-dir outputs/small
+
+    # Single label
+    uv run python -m app.preprocessing --label who
+
+    # Print dataset quality report only (no processing)
+    uv run python -m app.preprocessing --report
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from .config import PipelineConfig
+from .quality_checks import generate_dataset_report
 from .runner import PreprocessingPipeline
 
 
-def _progress(current: int, total: int, name: str, result: dict):
-    status = result["status"]
-    icon = {"ok": "✓", "skipped": "⊘", "error": "✗"}.get(status, "?")
-    elapsed = f" ({result['elapsed']:.1f}s)" if "elapsed" in result else ""
-    warn = ""
-    if status == "ok" and result.get("report", {}).get("warnings"):
-        warn = f" ⚠ {', '.join(result['report']['warnings'])}"
-    if status == "error":
-        warn = f" — {result.get('error', 'unknown')}"
-    print(f"  [{current}/{total}] {icon} {name}{elapsed}{warn}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="WLASL Video Preprocessing Pipeline")
-    parser.add_argument(
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="python -m app.preprocessing",
+        description="Preprocess sign-language videos (pipeline v2.0.0)",
+    )
+    p.add_argument(
         "--dataset-dir",
-        type=Path,
-        default=Path("dataset/raw_video_data"),
-        help="Path to raw dataset directory",
+        default="dataset/raw_video_data",
+        metavar="DIR",
+        help="Root directory of raw video data (default: %(default)s)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--output-dir",
-        type=Path,
-        default=Path("preprocessed"),
-        help="Path to output directory",
+        default="outputs/preprocessed",
+        metavar="DIR",
+        help="Output root directory (default: %(default)s)",
     )
-    parser.add_argument(
-        "--skip-flow",
-        action="store_true",
-        help="Skip RAFT optical flow computation (much faster)",
+    p.add_argument(
+        "--output-size",
+        type=int,
+        default=512,
+        metavar="PX",
+        help="Square output resolution in pixels (default: %(default)s)",
     )
-    parser.add_argument(
-        "--reprocess",
-        action="store_true",
-        help="Re-process videos even if output already exists",
-    )
-    parser.add_argument(
-        "--report",
-        action="store_true",
-        help="Print quality report for existing preprocessed data and exit",
-    )
-    parser.add_argument(
-        "--single",
-        type=str,
-        default=None,
-        help="Process a single video by relative path (e.g. who/who_63229.mp4)",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="auto",
-        choices=["auto", "cuda", "mps", "cpu"],
-        help="Device for RAFT model",
-    )
-    parser.add_argument(
+    p.add_argument(
         "--target-fps",
         type=int,
-        default=25,
+        default=30,
+        metavar="FPS",
+        help="Output video frame rate (default: %(default)s)",
     )
-    parser.add_argument(
-        "--sequence-length",
-        type=int,
-        default=32,
+    p.add_argument(
+        "--clahe-clip",
+        type=float,
+        default=2.0,
+        metavar="LIMIT",
+        help="CLAHE clip limit (default: %(default)s)",
     )
+    p.add_argument(
+        "--label",
+        default=None,
+        metavar="LABEL",
+        help="Process only this class label (e.g. 'who')",
+    )
+    p.add_argument(
+        "--no-skip-existing",
+        action="store_true",
+        help="Re-process videos that already have output files",
+    )
+    p.add_argument(
+        "--report",
+        action="store_true",
+        help="Print a quality report for already-processed videos and exit",
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable DEBUG logging",
+    )
+    return p
 
-    args = parser.parse_args()
+
+def _progress(idx: int, total: int, name: str) -> None:
+    width = len(str(total))
+    print(f"  [{idx:{width}d}/{total}] {name}", flush=True)
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     cfg = PipelineConfig(
-        dataset_dir=args.dataset_dir,
-        labels_csv=args.dataset_dir / "labels.csv",
-        output_dir=args.output_dir,
-        normalized_video_dir=args.output_dir / "_normalized_videos",
+        dataset_dir=Path(args.dataset_dir),
+        output_dir=Path(args.output_dir),
+        output_size=args.output_size,
         target_fps=args.target_fps,
-        target_sequence_length=args.sequence_length,
-        device=args.device,
+        clahe_clip_limit=args.clahe_clip,
     )
 
     pipeline = PreprocessingPipeline(cfg)
 
+    # ── Report mode ──────────────────────────────────────────────────────────
     if args.report:
-        print("\n📊 Dataset Quality Report\n")
-        report = pipeline.report()
-        print(f"  Total samples : {report['total_samples']}")
-        print(f"  Passed        : {report['passed']}")
-        print(f"  Failed        : {report['failed_count']}")
-        print("\n  Per-class counts:")
-        for cls, count in sorted(report["class_counts"].items()):
-            print(f"    {cls:15s} : {count}")
-        if report["failed_samples"]:
-            print("\n  ⚠ Failed samples:")
-            for f in report["failed_samples"]:
-                print(f"    {f['label']}/{f['video']} — {'; '.join(f['warnings'])}")
-        print()
-        return
+        reports = generate_dataset_report(cfg.output_dir)
+        total = len(reports)
+        passed = sum(1 for r in reports if r.passed)
+        failed_list = [r for r in reports if not r.passed]
+        print(f"\nDataset quality report — {passed}/{total} passed\n")
+        if failed_list:
+            print("FAILED samples:")
+            for r in failed_list:
+                warnings = "; ".join(r.warnings)
+                print(f"  {r.label}/{r.video_name}: {warnings}")
+        trimmed = sum(1 for r in reports if r.trimmed_frames > 0)
+        print(f"\nTrimmed {trimmed}/{total} samples.")
+        return 0 if not failed_list else 1
 
-    print("\n🔧 WLASL Preprocessing Pipeline")
-    print(f"   Dataset : {cfg.dataset_dir}")
-    print(f"   Output  : {cfg.output_dir}")
-    print(f"   Device  : {cfg.resolve_device()}")
-    print(f"   FPS     : {cfg.target_fps}")
-    print(f"   Seq Len : {cfg.target_sequence_length}")
-    print(f"   Flow    : {'skip' if args.skip_flow else cfg.flow_model}")
-    print()
+    # ── Processing mode ───────────────────────────────────────────────────────
+    skip_existing = not args.no_skip_existing
 
-    if args.single:
-        # Process one video
-        parts = args.single.replace("\\", "/").split("/")
-        label = parts[0]
-        video_name = parts[-1]
-        video_path = cfg.dataset_dir / args.single
+    if args.label:
+        # Single label
+        label_dir = cfg.dataset_dir / args.label
+        video_files = sorted(label_dir.glob("*.mp4"))
+        total = len(video_files)
+        if total == 0:
+            print(f"No .mp4 files found under {label_dir}", file=sys.stderr)
+            return 1
 
-        if not video_path.exists():
-            print(f"  ✗ File not found: {video_path}")
-            sys.exit(1)
+        print(f"Processing label '{args.label}' — {total} videos …\n")
+        processed = skipped = failed = trimmed_count = 0
 
-        print(f"  Processing {args.single} …")
-        result = pipeline.process_single_video(
-            video_path,
-            label,
-            video_name,
-            skip_existing=not args.reprocess,
-            skip_flow=args.skip_flow,
+        for idx, video_path in enumerate(video_files, start=1):
+            _progress(idx, total, video_path.name)
+            result = pipeline.process_single_video(
+                video_path,
+                args.label,
+                video_path.name,
+                skip_existing=skip_existing,
+            )
+            if result.get("skipped"):
+                skipped += 1
+            elif result.get("success"):
+                processed += 1
+                if result.get("trim_range"):
+                    trimmed_count += 1
+            else:
+                failed += 1
+                print(f"    ERROR: {result.get('error')}", file=sys.stderr)
+
+        print(
+            f"\nDone. processed={processed} skipped={skipped} "
+            f"failed={failed} trimmed={trimmed_count}"
         )
-        _progress(1, 1, video_name, result)
     else:
-        # Process full dataset
+        # Entire dataset
+        print(f"Processing entire dataset under '{cfg.dataset_dir}' …\n")
         summary = pipeline.run(
-            skip_existing=not args.reprocess,
-            skip_flow=args.skip_flow,
+            skip_existing=skip_existing,
             progress_cb=_progress,
         )
         print(
-            f"\n  Done — {summary['processed']} processed, "
-            f"{summary['skipped']} skipped, {summary['errors']} errors\n"
+            f"\nDone. total={summary['total']} "
+            f"processed={summary['processed']} "
+            f"skipped={summary['skipped']} "
+            f"failed={summary['failed']} "
+            f"trimmed={summary['trimmed_count']}"
         )
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

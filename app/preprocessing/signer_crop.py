@@ -1,10 +1,27 @@
 """
-Step 4 — Signer localization and cropping.
+Step 4 — Signer localization, crop, and trim-signal extraction.
 
-Detects the signer using MediaPipe Pose on sampled frames, computes a
-stable bounding box, crops all frames, and resizes to a consistent
-short-side resolution.
+Runs MediaPipe Pose on every frame (fast: ~10 ms/frame on CPU for a
+pose_landmarker_lite model at typical WLASL resolution).
+
+Two outputs are produced in one MediaPipe pass:
+
+  1. **Stable crop bbox** — median across all detected poses, expanded by
+     cfg.crop_expansion, clamped to frame bounds.
+
+  2. **Per-frame trim signals** —
+     - wrist_positions (T, 4) float32: [lx, ly, rx, ry] normalised [0, 1]
+     - hand_in_frame  (T,)  bool:  True when at least one wrist is visible
+       (wrist visibility > 0.3 in the pose model)
+
+These are passed to temporal_trim.py to detect idle head/tail segments.
+
+Running MediaPipe once and extracting both crop and trim signals is more
+efficient than a separate crop pass + a separate hand-detection pass.
 """
+
+import os
+import urllib.request
 
 import cv2
 import numpy as np
@@ -12,135 +29,109 @@ import mediapipe as mp
 
 from .config import PipelineConfig
 
+# Pose landmark indices used for bounding-box estimation:
+# nose (0), shoulders (11, 12), elbows (13, 14), wrists (15, 16), hips (23, 24)
+_BBOX_LM_IDS = [0, 11, 12, 13, 14, 15, 16, 23, 24]
+_LEFT_WRIST = 15
+_RIGHT_WRIST = 16
 
-# Landmark indices used for bounding-box estimation.
-# Shoulders (11, 12), elbows (13, 14), wrists (15, 16), hips (23, 24),
-# nose (0) — covers the signing space.
-_BBOX_LANDMARK_IDS = [0, 11, 12, 13, 14, 15, 16, 23, 24]
-
-
-def _detect_pose_bbox(
-    frame_rgb: np.ndarray,
-    pose_detector,
-) -> tuple[float, float, float, float] | None:
-    """
-    Run MediaPipe Pose on a single frame and return a normalised
-    bounding box (x_min, y_min, x_max, y_max) in [0, 1] coordinates.
-
-    Returns None if no landmarks are detected.
-    """
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-    result = pose_detector.detect(mp_image)
-
-    if not result.pose_landmarks or len(result.pose_landmarks) == 0:
-        return None
-
-    landmarks = result.pose_landmarks[0]  # first person
-    xs = [landmarks[i].x for i in _BBOX_LANDMARK_IDS if landmarks[i].visibility > 0.3]
-    ys = [landmarks[i].y for i in _BBOX_LANDMARK_IDS if landmarks[i].visibility > 0.3]
-
-    if len(xs) < 3:
-        return None
-
-    return (min(xs), min(ys), max(xs), max(ys))
+_POSE_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "pose_landmarker/pose_landmarker_lite/float16/latest/"
+    "pose_landmarker_lite.task"
+)
 
 
-def compute_signer_bbox(
+def _ensure_pose_model() -> str:
+    model_dir = os.path.join(os.path.dirname(__file__), "..", "models")
+    os.makedirs(model_dir, exist_ok=True)
+    path = os.path.join(model_dir, "pose_landmarker_lite.task")
+    if not os.path.exists(path):
+        print("Downloading pose_landmarker_lite.task …")
+        urllib.request.urlretrieve(_POSE_MODEL_URL, path)
+    return path
+
+
+def analyze_signer(
     frames: list[np.ndarray],
     cfg: PipelineConfig,
-) -> tuple[int, int, int, int]:
+) -> tuple[tuple[int, int, int, int], np.ndarray, np.ndarray]:
     """
-    Estimate a stable signer bounding box by running pose detection on
-    every *pose_sample_step*-th frame and taking the median bbox.
+    Run MediaPipe Pose on every frame and return:
+        bbox            — (x1, y1, x2, y2) pixel crop region in original frames
+        wrist_positions — (T, 4) float32 [lx, ly, rx, ry] normalised coords
+        hand_in_frame   — (T,)  bool — True if at least one wrist is visible
 
-    Returns:
-        (x1, y1, x2, y2) in pixel coordinates of the original frames,
-        already expanded by *crop_expansion*.  Clamped to frame bounds.
+    Args:
+        frames: RGB uint8 frames (post-CLAHE, pre-crop).
+        cfg:    PipelineConfig.
     """
-    import os
-    import urllib.request
-
-    # Download pose model if needed
-    model_dir = os.path.join(
-        os.path.dirname(__file__), "..", "keyframe_extractor", "models"
-    )
-    os.makedirs(model_dir, exist_ok=True)
-    model_path = os.path.join(model_dir, "pose_landmarker_lite.task")
-    if not os.path.exists(model_path):
-        url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
-        urllib.request.urlretrieve(url, model_path)
-
+    model_path = _ensure_pose_model()
     options = mp.tasks.vision.PoseLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
         running_mode=mp.tasks.vision.RunningMode.IMAGE,
         num_poses=1,
     )
 
+    T = len(frames)
     h, w = frames[0].shape[:2]
+
     bboxes: list[tuple[float, float, float, float]] = []
+    wrist_positions = np.zeros((T, 4), dtype=np.float32)  # [lx, ly, rx, ry]
+    wrist_vis = np.zeros((T, 2), dtype=np.float32)  # [left_vis, right_vis]
 
     with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
-        for i in range(0, len(frames), cfg.pose_sample_step):
-            bbox = _detect_pose_bbox(frames[i], detector)
-            if bbox is not None:
-                bboxes.append(bbox)
+        for i, frame_rgb in enumerate(frames):
+            mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+            result = detector.detect(mp_img)
 
-    if not bboxes:
-        # Fallback: centre crop 80 % of the frame
-        margin_x = int(w * 0.1)
-        margin_y = int(h * 0.1)
-        return (margin_x, margin_y, w - margin_x, h - margin_y)
+            if not result.pose_landmarks:
+                continue
 
-    # Median across all detections for robustness
-    arr = np.array(bboxes)
-    x_min, y_min, x_max, y_max = np.median(arr, axis=0)
+            lm = result.pose_landmarks[0]  # first (and only) person
 
-    # Expand
-    cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
-    bw, bh = (x_max - x_min) * cfg.crop_expansion, (y_max - y_min) * cfg.crop_expansion
-    x_min = cx - bw / 2
-    x_max = cx + bw / 2
-    y_min = cy - bh / 2
-    y_max = cy + bh / 2
+            # Collect coordinates for bbox
+            xs = [lm[j].x for j in _BBOX_LM_IDS if lm[j].visibility > 0.3]
+            ys = [lm[j].y for j in _BBOX_LM_IDS if lm[j].visibility > 0.3]
+            if len(xs) >= 3:
+                bboxes.append((min(xs), min(ys), max(xs), max(ys)))
 
-    # Convert to pixel coords and clamp
-    x1 = max(0, int(x_min * w))
-    y1 = max(0, int(y_min * h))
-    x2 = min(w, int(x_max * w))
-    y2 = min(h, int(y_max * h))
+            # Wrist data for temporal trimming
+            lw = lm[_LEFT_WRIST]
+            rw = lm[_RIGHT_WRIST]
+            wrist_positions[i] = [lw.x, lw.y, rw.x, rw.y]
+            wrist_vis[i] = [lw.visibility, rw.visibility]
 
-    return (x1, y1, x2, y2)
+    # hand_in_frame: at least one wrist has visibility > 0.3
+    hand_in_frame = wrist_vis.max(axis=1) > 0.3
+
+    # --- Compute stable crop bbox ---
+    if bboxes:
+        arr = np.array(bboxes)
+        xn, yn, xx, yx = np.median(arr, axis=0)
+
+        # Expand around centre
+        cx, cy = (xn + xx) / 2, (yn + yx) / 2
+        bw = (xx - xn) * cfg.crop_expansion
+        bh = (yx - yn) * cfg.crop_expansion
+
+        x1 = max(0, int((cx - bw / 2) * w))
+        y1 = max(0, int((cy - bh / 2) * h))
+        x2 = min(w, int((cx + bw / 2) * w))
+        y2 = min(h, int((cy + bh / 2) * h))
+        bbox = (x1, y1, x2, y2)
+    else:
+        # Fallback: 80 % centre crop
+        mx, my = int(w * 0.1), int(h * 0.1)
+        bbox = (mx, my, w - mx, h - my)
+
+    return bbox, wrist_positions, hand_in_frame
 
 
-def crop_and_resize(
+def crop_frames(
     frames: list[np.ndarray],
     bbox: tuple[int, int, int, int],
-    short_side: int,
 ) -> list[np.ndarray]:
-    """
-    Crop every frame to *bbox* and resize so the short side equals
-    *short_side*, preserving aspect ratio.
-    """
+    """Crop every frame to (x1, y1, x2, y2) pixel coordinates."""
     x1, y1, x2, y2 = bbox
-    crop_h = y2 - y1
-    crop_w = x2 - x1
-
-    if crop_h <= 0 or crop_w <= 0:
-        # Degenerate bbox — return originals resized
-        return _resize_short_side(frames, short_side)
-
-    cropped = [f[y1:y2, x1:x2] for f in frames]
-    return _resize_short_side(cropped, short_side)
-
-
-def _resize_short_side(frames: list[np.ndarray], short_side: int) -> list[np.ndarray]:
-    """Resize all frames so the short side == *short_side*, keeping AR."""
-    h, w = frames[0].shape[:2]
-    if h <= w:
-        new_h = short_side
-        new_w = int(w * short_side / h)
-    else:
-        new_w = short_side
-        new_h = int(h * short_side / w)
-
-    return [cv2.resize(f, (new_w, new_h), interpolation=cv2.INTER_AREA) for f in frames]
+    return [f[y1:y2, x1:x2] for f in frames]
