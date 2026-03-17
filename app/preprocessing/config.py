@@ -27,7 +27,6 @@ class PipelineConfig:
 
     # --- Step 4: Signer Localization ---
     crop_expansion: float = 1.3  # final global bbox expansion around detected body
-    pose_sample_step: int = 3  # run pose every N frames for bbox stability
     crop_visibility_threshold: float = 0.3
     crop_quantile_low: float = 0.02
     crop_quantile_high: float = 0.98

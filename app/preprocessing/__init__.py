@@ -7,7 +7,7 @@ Pipeline version: 2.0.0
 
 Steps:
   1. Probe raw FPS
-  2. Extract frames (cv2, normalised to target_fps)
+  2. Extract frames (cv2 decode from source video)
   3. CLAHE lighting normalisation (full frame)
   4. Signer analysis — crop bbox + wrist signals
   5. Crop to signer bbox
