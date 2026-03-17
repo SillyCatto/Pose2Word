@@ -102,10 +102,9 @@ class Trainer:
         
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch} [Train]")
         
-        for batch_idx, (features, labels) in enumerate(pbar):
+        for batch_idx, (landmarks, labels) in enumerate(pbar):
             # Move data to device
-            landmarks = features["landmarks"].to(self.device)
-            flow = features["flow"].to(self.device)
+            landmarks = landmarks.to(self.device)
             labels = labels.to(self.device)
             
             # Zero gradients
@@ -114,7 +113,7 @@ class Trainer:
             # Forward pass with mixed precision
             if self.use_mixed_precision:
                 with torch.amp.autocast(device_type=self.device.type):
-                    logits = self.model(landmarks, flow)
+                    logits = self.model(landmarks)
                     loss = self.criterion(logits, labels)
                 
                 # Backward pass with gradient scaling
@@ -122,7 +121,7 @@ class Trainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                logits = self.model(landmarks, flow)
+                logits = self.model(landmarks)
                 loss = self.criterion(logits, labels)
                 loss.backward()
                 self.optimizer.step()
