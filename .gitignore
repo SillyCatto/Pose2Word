@@ -21,3 +21,4 @@ dataset/
 .models/
 output/
 preprocessed/
+preprocessed_mini/
