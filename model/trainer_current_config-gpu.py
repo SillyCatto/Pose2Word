@@ -526,7 +526,7 @@ if __name__ == "__main__":
         "num_classes": 15,
         "batch_size": 8,
         "num_epochs": 50,
-        "learning_rate": 0.001,
+        "learning_rate": 0.01,
         "save_dir": "checkpoints/lstm_run1",
         "num_workers": 4,
         "use_mixed_precision": True,
@@ -540,4 +540,4 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
     
     # Uncomment to train
-    # train_model(**config)
+    train_model(**config)
