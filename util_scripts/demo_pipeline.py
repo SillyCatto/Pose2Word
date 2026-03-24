@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Demo: RAFT + Landmarks Sign Language Recognition Pipeline
+Demo: Sign Language Landmark Pipeline
 
 This script demonstrates the complete pipeline:
-1. Extract optical flow using RAFT
-2. Load landmarks from MediaPipe
-3. Train a sign language classifier
-4. Evaluate the model
+1. Optional RAFT optical-flow demo (standalone)
+2. Load landmark dataset
+3. Run forward passes through classifier architectures
+4. Show training entry points
 
 Run: python demo_pipeline.py
 """
@@ -16,8 +16,10 @@ import numpy as np
 from pathlib import Path
 import sys
 
-# Add model directory to path
-sys.path.append(str(Path(__file__).parent))
+# Ensure project root is on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from model.raft_flow_extractor import RAFTFlowExtractor
 from model.dataset import SignLanguageDataset
@@ -94,12 +96,12 @@ def demo_dataset_loading():
     print("=" * 70)
     
     # Check if landmarks exist
-    landmarks_dir = Path("extracted_landmarks")
+    landmarks_dir = PROJECT_ROOT / "outputs" / "landmarks"
     
     if not landmarks_dir.exists():
         print(f"\n⚠️  Landmarks directory not found: {landmarks_dir}")
         print("   To use this demo:")
-        print("   1. Run the Streamlit app: streamlit run keyframe_extractor/app.py")
+        print("   1. Run the Streamlit app: streamlit run main.py")
         print("   2. Use the Landmark Extractor tab to process videos")
         print("   3. Re-run this demo")
         return None
@@ -122,10 +124,9 @@ def demo_dataset_loading():
         
         # Load a sample
         if len(dataset) > 0:
-            features, label = dataset[0]
+            landmarks, label = dataset[0]
             print(f"\n  Sample 0:")
-            print(f"    - Landmarks shape: {features['landmarks'].shape}")
-            print(f"    - Flow shape: {features['flow'].shape}")
+            print(f"    - Landmarks shape: {landmarks.shape}")
             print(f"    - Label: {label} ({dataset.classes[label]})")
         
         return dataset
@@ -144,18 +145,15 @@ def demo_model_creation(device):
     # Create dummy data
     batch_size = 4
     num_frames = 30
-    landmark_dim = 258
-    flow_dim = 32
+    landmark_dim = 168
     num_classes = 15
     
     print(f"\nCreating test batch:")
     print(f"  - Batch size: {batch_size}")
     print(f"  - Frames: {num_frames}")
     print(f"  - Landmark features: {landmark_dim}")
-    print(f"  - Flow features: {flow_dim}")
     
     landmarks = torch.randn(batch_size, num_frames, landmark_dim).to(device)
-    flow = torch.randn(batch_size, num_frames - 1, flow_dim).to(device)
     
     models_to_test = ["lstm", "transformer", "hybrid"]
     
@@ -166,15 +164,16 @@ def demo_model_creation(device):
             model = create_model(
                 model_type=model_type,
                 num_classes=num_classes,
-                device=device
+                device=device,
+                landmark_dim=landmark_dim,
             )
             
             # Forward pass
             with torch.no_grad():
-                logits = model(landmarks, flow)
+                logits = model(landmarks)
             
             print(f"✓ Forward pass successful")
-            print(f"  - Input: landmarks {landmarks.shape}, flow {flow.shape}")
+            print(f"  - Input: landmarks {landmarks.shape}")
             print(f"  - Output: {logits.shape}")
             print(f"  - Predictions: {torch.argmax(logits, dim=1).tolist()}")
             
@@ -194,10 +193,9 @@ def demo_training_setup():
     
     print("\nTo train a model:")
     print("\nOption 1: Use the Streamlit UI")
-    print("  1. Run: streamlit run keyframe_extractor/app.py")
-    print("  2. Go to the '🤖 Model Training' tab")
-    print("  3. Configure training parameters")
-    print("  4. Click 'Start Training'")
+    print("  1. Run: streamlit run main.py")
+    print("  2. Run preprocessing, keyframe extraction, and landmark extraction")
+    print("  3. Train using scripts below")
     
     print("\nOption 2: Use Python script")
     print("  Example code:")
@@ -205,8 +203,7 @@ def demo_training_setup():
     from model.trainer import train_model
     
     train_model(
-        landmarks_dir="extracted_landmarks",
-        flow_dir=None,  # Optional
+        landmarks_dir="outputs/landmarks",
         model_type="lstm",
         num_classes=15,
         batch_size=16,
@@ -224,7 +221,7 @@ def main():
     """Run all demos."""
     print("\n" + "=" * 70)
     print("SIGN LANGUAGE RECOGNITION PIPELINE DEMO")
-    print("RAFT Optical Flow + MediaPipe Landmarks + LSTM/Transformer")
+    print("Landmarks + LSTM/Transformer (with optional RAFT demo)")
     print("=" * 70)
     
     # Check environment
@@ -248,7 +245,7 @@ def main():
     print("=" * 70)
     print("\nNext steps:")
     print("1. Extract landmarks from your videos using the Streamlit app")
-    print("2. (Optional) Extract optical flow features")
+    print("2. (Optional) Run RAFT flow experiments separately")
     print("3. Train a model using the Streamlit UI or Python script")
     print("4. Evaluate and test your trained model")
     
