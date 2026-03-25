@@ -15,7 +15,7 @@ Example:
       --keyframes-dir outputs/keyframes \
       --landmarks-dir outputs/landmarks \
       --checkpoint-dir checkpoints/rtx2060_full_run \
-      --trainer-script "model/trainer_current_config(gpu).py" \
+    --trainer-script "model/trainer_current_config-gpu.py" \
       --device cuda
 """
 
@@ -79,7 +79,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", default="checkpoints/full_pipeline_run")
     parser.add_argument(
         "--trainer-script",
-        default="model/trainer_current_config(gpu).py",
+        default="model/trainer_current_config-gpu.py",
         help="Path to a trainer script that defines train_model(...)",
     )
 
