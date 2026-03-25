@@ -1,248 +1,231 @@
 # Pose2Word
 
-Word-Level Sign Language Recognition Workbench
+### Word-Level Sign Language Recognition Workbench
 
-MediaPipe Tasks • OpenCV • PyTorch • Streamlit • NumPy • UV
+[![Python](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![MediaPipe](https://img.shields.io/badge/MediaPipe-Tasks-0F9D58)](https://mediapipe.dev/)
+[![OpenCV](https://img.shields.io/badge/OpenCV-Computer_Vision-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
+[![NumPy](https://img.shields.io/badge/NumPy-Arrays-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![UV](https://img.shields.io/badge/UV-Package_Manager-6E56CF)](https://docs.astral.sh/uv/)
 
-Pose2Word is an end-to-end project for preparing sign-language video data, extracting compact motion-aware features, training classifiers, and running upload-and-predict inference from a single workflow.
-
----
-
-## Project Overview
-
-Pose2Word is a practical pipeline for word-level sign recognition.
-
-Instead of treating sign recognition as only a training script or only a demo UI, this repo combines:
-
-- data preprocessing for raw videos
-- semantic keyframe extraction
-- landmark tensor generation
-- model training and checkpointing
-- interactive prediction in Streamlit
-
-The current production path is landmark-first and centered on a 168-dimensional Relative Quantization (RQ) feature representation.
+Pose2Word is an end-to-end project for preparing sign-language video data, extracting compact motion-aware features, training classifiers, and running upload-and-predict inference in one workflow.
 
 ---
 
-## The Problem We Solve
+## 👨‍🎓 Student Name(s)
 
-Sign-language ML projects often break in real usage because the pipeline is fragmented:
+- Navid
+- Musaddiq
+- Mahbub
+- Raiyan
+- Sinha
 
-- raw videos are inconsistent (fps, framing, lighting, idle frames)
-- feature generation scripts and training scripts drift from inference logic
-- class order and sequence-length mismatches silently produce wrong labels
-- teams juggle many disconnected tools and ad hoc scripts
+## 📚 Course Name
 
-Result: experiments are hard to reproduce, checkpoints are hard to trust, and inference quality drops in the real world.
+- CSE-4544: ML Lab Final Project (IUT-SWE-22)
 
----
 
-## Our Solution
 
-Pose2Word unifies the workflow into one coherent system.
+## 🎯 Problem Statement
 
-| Stage | What it does | Output |
-|---|---|---|
-| Video Preprocessing | Normalize FPS, enhance contrast, crop signer, trim idle frames, resize/pad | Cleaned `.mp4` clips + `metadata.json` |
-| Keyframe Extraction | Select semantically meaningful frames using hybrid motion/hand signals | `frame_*.png` folders |
-| Landmark Extraction | Convert keyframes into fixed-shape landmark tensors | `.npy` tensors (default `(15, 168)`) |
-| Training | Train LSTM/Transformer/Hybrid classifiers | `.pth` checkpoints + logs/history |
-| Prediction | Upload video, run aligned preprocessing + feature path, classify | Top-k predictions + confidence |
+### What problem are you trying to solve?
 
----
+Build a practical word-level sign-language recognition system that can process raw videos and predict sign classes reliably.
 
-## Why This Is Required
+### Why is this problem important?
 
-For sign recognition, model quality depends as much on data consistency as on architecture.
+Sign-language recognition supports accessibility and improves communication support for Deaf and Hard-of-Hearing communities in digital systems.
 
-Pose2Word is built to enforce that consistency across the full lifecycle:
+### Real-world application of the problem
 
-- same preprocessing assumptions for dataset prep and inference
-- explicit feature contracts (`168` current, `258` legacy support)
-- deterministic output structure for downstream training
-- checkpoint-aware inference with class-order and sequence controls
-
-This reduces hidden mismatch bugs and makes experiments easier to repeat and improve.
+- assistive communication tools
+- educational sign-learning applications
+- HCI interfaces and smart interpretation systems
+- rapid prototyping for accessibility-focused products
 
 ---
 
-## What We Want To Do (Project Direction)
+## 🗂️ Dataset
 
-Current direction and near-term goals:
+### Source of the dataset
 
-1. Improve reliability and reproducibility of the full data-to-prediction loop.
-2. Expand class coverage and sample diversity beyond the current small-scale setup.
-3. Tighten training/inference parity (especially sequence length and label-order ergonomics).
-4. Add better evaluation reporting and comparison tooling across checkpoints.
-5. Continue optimizing the landmark-first baseline before introducing heavier alternatives.
+- WLASL-based dataset organization
+- local raw dataset root: `dataset/raw_video_data`
 
-Longer-term ambition:
+### Number of samples and features
 
-- evolve Pose2Word into a robust, practical sign-language experimentation platform that supports rapid iteration and cleaner deployment paths.
+- 15 word classes in the core setup
+- 187 total `.mp4` video samples (current snapshot)
+- extracted feature format (current primary path): `(T, 168)` where default `T = 15`
 
----
+### Key attributes/features
 
-## Current Architecture
+- signer-centered cropped and normalized videos
+- semantically selected keyframes (8 to 15)
+- MediaPipe-based landmarks with Relative Quantization (RQ)
 
-### Training-data path
+### Any challenges in the data
 
-```text
-raw videos
-	-> preprocessing pipeline
-	-> preprocessed clips (.mp4)
-	-> keyframe extraction
-	-> keyframe image folders
-	-> landmark extraction
-	-> .npy tensors
-	-> model training
-	-> checkpoint (.pth)
-```
-
-### Inference path
-
-```text
-uploaded video
-	-> in-memory preprocessing subset
-	-> feature extraction
-	-> checkpoint load + forward pass
-	-> ranked class probabilities
-```
+- variable signer motion and framing
+- idle segments before/after signing
+- class-order and sequence-length mismatch risks during inference
 
 ---
 
-## App Features (Streamlit)
+## 🧹 Data Preprocessing
 
-Run the UI from `main.py` to access 4 tabs:
+### Handling missing values
 
-1. `Video Preprocessing`
-2. `Keyframe Extractor`
-3. `Landmark Extractor`
-4. `Predict Sign`
+- no tabular missing-value imputation is used
+- for vision data, missing detections are handled by robust defaults and sequence padding/truncation
 
-What you can do in-app:
+### Data cleaning
 
-- preprocess single videos or dataset batches
-- preview keyframes and motion statistics
-- extract and save landmark tensors
-- run closed-vocabulary prediction from a trained checkpoint
+- frame-rate normalization via ffmpeg
+- CLAHE-based contrast enhancement
+- signer-focused cropping
+- temporal idle trimming
+- resize + pad to square output
+
+### Feature engineering or selection
+
+- keyframe extraction using fused motion/landmark signals
+- landmark selection to 56 points per frame (168 dims after flattening)
+- hand dominance correction and shoulder-based calibration
+- relative quantization + feature scaling
+
+### Data splitting (training/testing)
+
+- model training scripts perform train/validation splitting during training workflow
+- exact split configuration depends on selected trainer script and run config
 
 ---
 
-## Tech Stack
+## 🤖 Machine Learning Model(s)
 
-- Python 3.13+
-- Streamlit
+### Algorithm(s) used
+
+- LSTM classifier
+- Transformer classifier
+- Hybrid architecture support
+
+### Why you chose these models
+
+- sequential temporal modeling fits sign progression over frames
+- LSTM provides a lightweight baseline
+- Transformer/hybrid variants support richer temporal feature learning
+
+### Brief explanation of how they work
+
+- input is a fixed-length landmark sequence
+- sequence encoder learns temporal representation
+- final classifier head outputs class probabilities across sign words
+
+---
+
+## 🏋️ Model Training
+
+### Training process
+
+1. preprocess raw videos
+2. extract keyframes
+3. generate landmark tensors
+4. train classifier and save checkpoints/logs
+
+### Important parameters (hyperparameters)
+
+- `model_type`: `lstm` / `transformer` / `hybrid`
+- `batch_size` (example default in pipeline runner: 8)
+- `num_epochs` (example default: 50)
+- `learning_rate` (example default: 0.001)
+- `weight_decay` (example default: 1e-4)
+- `target_seq_len` (landmark default often 15)
+- device: `cuda` / `mps` / `cpu`
+
+### Tools/libraries used
+
+- Python
+- PyTorch ecosystem
+- Streamlit (for app interactions)
 - MediaPipe Tasks
 - OpenCV
-- PyTorch / TorchVision / TorchAudio
 - NumPy / SciPy / scikit-learn
-- imageio-ffmpeg (bundled ffmpeg fallback)
-- UV (recommended environment + dependency manager)
 
 ---
 
-## Repository Structure
+## 📈 Results and Evaluation
 
-```text
-app/
-	core/
-		inference.py
-		keyframe_pipeline.py
-		landmark_pipeline.py
-		mediapipe_tasks.py
-	preprocessing/
-		runner.py
-		config.py
-		...
-	views/
-		preprocessing_page.py
-		keyframe_page.py
-		landmark_page.py
-		predict_page.py
+### Evaluation metrics
 
-model/
-	dataset.py
-	sign_classifier.py
-	trainer_current_config-gpu.py
-	trainer.py
+- accuracy (tracked in available training history)
+- training and validation loss curves
 
-util_scripts/
-	run_full_pipeline.py
-	demo_pipeline.py
+### Available run snapshot (example from current checkpoints)
 
-docs/
-	pipeline_flow.md
-	preprocessing_pipeline.md
-	keyframe_extraction_pipeline.md
-	landmark_extraction_pipeline.md
-```
+From `mini_brother_mother_quick5/training_history.json`:
+
+- `val_acc` reached `1.0` by epoch 4 to 5
+- `val_loss` improved from ~`0.6933` to ~`0.6895`
+
+### Comparison if multiple models were used
+
+- multiple model types are supported by the training API
+- side-by-side benchmark tables are not yet consolidated in the repository docs
 
 ---
 
-## Getting Started
+## 🖼️ Visualization / Demo
 
-### 1) Install UV (recommended)
-
-See UV installation guide: https://docs.astral.sh/uv/getting-started/installation/
-
-### 2) Sync dependencies
-
-```bash
-uv sync
-```
-
-### 3) Launch the app
-
-```bash
-uv run streamlit run main.py
-```
+- Streamlit tabs provide visual workflow demos:
+  - preprocessing page
+  - keyframe preview and selected frame outputs
+  - landmark extraction outputs (`.npy`)
+  - prediction output with top-k probabilities and confidence
+- TensorBoard logs are generated in checkpoint run folders for training visualization
 
 ---
 
-## Typical Workflows
+## ⚠️ Challenges and Limitations
 
-### A) UI-first workflow
+### Problems faced during the project
 
-1. Use `Video Preprocessing`
-2. Use `Keyframe Extractor`
-3. Use `Landmark Extractor`
-4. Train from generated landmark tensors (CLI)
-5. Use `Predict Sign` with the trained checkpoint
+- keeping training and inference sequence settings aligned
+- handling variable-quality videos and inconsistent motion windows
+- balancing extraction quality vs processing speed
 
-### B) End-to-end CLI workflow
+### Limitations of the current solution
 
-```bash
-uv run python util_scripts/run_full_pipeline.py \
-	--dataset-dir dataset/raw_video_data \
-	--preprocessed-dir outputs/preprocessed \
-	--keyframes-dir outputs/keyframes \
-	--landmarks-dir outputs/landmarks \
-	--checkpoint-dir checkpoints/full_pipeline_run \
-	--trainer-script model/trainer_current_config-gpu.py \
-	--model-type lstm \
-	--device cuda
-```
-
-Switch `--device` to `cpu` or `mps` when needed.
-
-### C) Preprocessing-only CLI
-
-```bash
-uv run python -m app.preprocessing --dataset-dir dataset/raw_video_data --output-dir outputs/preprocessed
-```
+- closed-vocabulary prediction (only trained classes)
+- no full benchmark report table for all runs in one place
+- no dedicated in-app training tab (training is CLI-driven)
 
 ---
 
-## Prediction Notes (Important)
+## ✅ Conclusion and Future Work
 
-- Prediction is closed-vocabulary: it only recognizes classes seen during training.
-- Class label order must match training order exactly.
-- Sequence length in prediction must match training configuration.
-- If ffmpeg is unavailable, normalization/prediction preprocessing will fail.
+### Key findings
+
+- a unified preprocessing + landmark + training + inference pipeline improves reproducibility
+- landmark-first representation works as a strong practical baseline
+- end-to-end tooling in one repo reduces integration errors
+
+### Possible improvements
+
+- standardized experiment tracking and comparison dashboard
+- expanded dataset scale and class coverage
+- stronger model selection and calibration workflows
+
+### Future research directions
+
+- robust signer/domain adaptation
+- improved temporal attention variants
+- multimodal feature fusion extensions
 
 ---
 
-## We Kept Words (Dataset Snapshot)
+## 🧠 We Kept Words (Dataset Snapshot)
 
 Based on WLASL, we kept 15 word classes:
 
@@ -265,30 +248,34 @@ Based on WLASL, we kept 15 word classes:
 | yes | 12 |
 | **TOTAL MP4s** | **187** |
 
-Some checkpoints and local experiments in this repository may use smaller subsets.
+---
+
+## 🚀 Quick Start
+
+```bash
+uv sync
+uv run streamlit run main.py
+```
+
+### End-to-end CLI pipeline
+
+```bash
+uv run python util_scripts/run_full_pipeline.py \
+  --dataset-dir dataset/raw_video_data \
+  --preprocessed-dir outputs/preprocessed \
+  --keyframes-dir outputs/keyframes \
+  --landmarks-dir outputs/landmarks \
+  --checkpoint-dir checkpoints/full_pipeline_run \
+  --trainer-script model/trainer_current_config-gpu.py \
+  --model-type lstm \
+  --device cuda
+```
 
 ---
 
-## Known Constraints
+## 📌 Notes
 
-- Current strongest path is landmark-first; RAFT-related artifacts exist but are not the primary active route.
-- Training is CLI-driven (no dedicated training tab in the app).
-- Different defaults across stages (for example sequence length) can cause accidental mismatch if not set carefully.
-
----
-
-## Team
-
-IUT-SWE-22 | CSE-4544 ML Lab Final Project
-
-- Navid
-- Musaddiq
-- Mahbub
-- Raiyan
-- Sinha
-
----
-
-## License
-
-No license file is currently included in this repository. Add one before external distribution.
+- Prediction is closed-vocabulary.
+- Class label order must match training order exactly.
+- Sequence length in prediction must match training configuration.
+- If ffmpeg is unavailable, normalization and prediction preprocessing will fail.
