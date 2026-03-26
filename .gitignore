@@ -20,4 +20,5 @@ env
 dataset/
 .models/
 output/
+outputs/
 preprocessed/
